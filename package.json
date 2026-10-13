@@ -1,7 +1,7 @@
 {
   "name": "paypal-cancellation-assistant",
   "version": "1.0.0",
-  "description": "商家付款授权取消审核助手的最小开发骨架",
+  "description": "Minimal development scaffold for merchant payment authorization review",
   "private": true,
   "main": "server.js",
   "engines": {
@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "paypal:check": "node scripts/paypal-check.js"
   },
   "keywords": [],
   "author": "",

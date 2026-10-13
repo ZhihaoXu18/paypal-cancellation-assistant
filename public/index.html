@@ -1,35 +1,48 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>付款授权审核助手</title>
+    <title>Payment Authorization Review Assistant</title>
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
   <body>
     <main>
       <header>
-        <p class="eyebrow">商家审核工作台 · 开发预览</p>
-        <h1>付款授权审核助手</h1>
-        <p>发现订单取消后仍保留的 PayPal 付款授权，供商家核实。</p>
-        <p id="health" role="status">正在检查应用状态…</p>
+        <p class="eyebrow">Merchant review workspace · Development preview</p>
+        <h1>Payment Authorization Review Assistant</h1>
+        <p>Review PayPal authorizations that remain active after an order is cancelled.</p>
+        <p id="health" role="status">Checking application status…</p>
       </header>
       <article aria-labelledby="order-title">
-        <span class="badge">模拟数据</span>
-        <h2 id="order-title">订单 DEMO-1001</h2>
+        <span class="badge">Mock data</span>
+        <h2 id="order-title">Order DEMO-1001</h2>
         <dl>
-          <div><dt>订单金额</dt><dd>CAD 100</dd></div>
-          <div><dt>订单状态</dt><dd>已取消</dd></div>
-          <div><dt>发货状态</dt><dd>未发货</dd></div>
-          <div><dt>付款状态</dt><dd>已授权但未收款</dd></div>
-          <div><dt>付款授权</dt><dd>尚未取消（模拟）</dd></div>
+          <div><dt>Order amount</dt><dd>CAD 100</dd></div>
+          <div><dt>Order status</dt><dd>Order cancelled</dd></div>
+          <div><dt>Shipping status</dt><dd>Not shipped</dd></div>
+          <div><dt>Payment status</dt><dd>Payment authorized — not captured</dd></div>
+          <div><dt>Payment authorization</dt><dd>Not voided (Mock data)</dd></div>
         </dl>
         <aside>
-          <h3>审核建议</h3>
-          <p>需要核实并取消付款授权</p>
-          <p class="note">请商家核实订单与付款状态。本页面仅展示模拟案件，未连接 PayPal，不执行取消授权或其他支付操作。</p>
+          <h3>Recommendation</h3>
+          <p>Verify the order and payment status, then Void authorization. Merchant approval required.</p>
+          <p class="note">This page displays Mock data only and does not connect to PayPal or perform payment operations. Voiding an authorization does not guarantee immediate release of funds by the buyer’s bank.</p>
         </aside>
+      </article>
+      <article aria-labelledby="sandbox-title">
+        <span class="badge">Sandbox transaction · Not mock data</span>
+        <h2 id="sandbox-title">Authorize a CAD 100.00 test order</h2>
+        <p>Sandbox only. Merchant approval required. Use your Sandbox Personal account to approve checkout. This creates an authorization, not a captured payment.</p>
+        <p>Creating this order does not mark it cancelled. No capture, refund, or void operations are available.</p>
+        <div id="paypal-buttons"></div>
+        <p id="sandbox-status" role="status">Loading Sandbox checkout…</p>
+        <dl id="sandbox-details"></dl>
+        <label for="existing-order-id">Existing Sandbox order ID (read-only lookup)</label>
+        <input id="existing-order-id" type="text" maxlength="64" autocomplete="off">
+        <button id="lookup-sandbox" type="button">Load existing order status</button>
+        <button id="refresh-sandbox" type="button" disabled>Refresh actual authorization status</button>
       </article>
     </main>
   </body>

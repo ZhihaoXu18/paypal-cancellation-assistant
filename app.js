@@ -1,13 +1,46 @@
 const express = require('express');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const { createPayPal, SafeError } = require('./lib/paypal');
 
-const app = express();
-app.disable('x-powered-by');
-
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', application: 'paypal-cancellation-assistant' });
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
-
+function createApp(paypal = createPayPal()) {
+  const app = express();
+  const sessions = new Set();
+  app.disable('x-powered-by');
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', application: 'paypal-cancellation-assistant' });
+  });
+  app.use('/api/paypal', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    const origin = req.get('origin');
+    if (origin && origin !== 'http://127.0.0.1:3000') return res.status(403).json({ error: 'Request origin is not allowed.' });
+    if (req.method === 'POST' && !req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
+    const cookie = req.get('cookie') || '';
+    let session = cookie.match(/(?:^|;\s*)sandbox_session=([a-f0-9-]{36})(?:;|$)/)?.[1];
+    if (!sessions.has(session)) {
+      session = randomUUID(); sessions.add(session);
+      res.cookie('sandbox_session', session, { httpOnly: true, sameSite: 'strict', path: '/api/paypal' });
+    }
+    req.sandboxSession = session;
+    next();
+  });
+  const route = (handler) => async (req, res) => {
+    try {
+      if (req.method === 'POST' && req.path.endsWith('/authorize')) console.log(`Sandbox authorization callback received for order ${req.params.id}.`);
+      res.json(await handler(req));
+    }
+    catch (error) {
+      console.warn(error instanceof SafeError ? error.message : 'Sandbox operation failed; raw details suppressed.');
+      res.status(error instanceof SafeError ? error.status : 500).json({ error: error instanceof SafeError ? error.message : 'Sandbox operation failed.' });
+    }
+  };
+  app.get('/api/paypal/config', route(() => paypal.config()));
+  app.post('/api/paypal/orders', route(req => paypal.create(req.sandboxSession)));
+  app.post('/api/paypal/orders/:id/authorize', route(req => paypal.authorize(req.params.id, req.sandboxSession)));
+  app.get('/api/paypal/orders/:id', route(req => paypal.status(req.params.id, req.sandboxSession)));
+  app.use(express.static(path.join(__dirname, 'public')));
+  return app;
+}
+const app = createApp();
 module.exports = app;
+module.exports.createApp = createApp;

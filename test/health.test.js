@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const app = require('../app');
 
-test('GET /api/health 返回 HTTP 200 和健康状态', async () => {
+test('GET /api/health returns HTTP 200 and a healthy status', async () => {
   const server = app.listen(0, '127.0.0.1');
   try {
     await once(server, 'listening');
