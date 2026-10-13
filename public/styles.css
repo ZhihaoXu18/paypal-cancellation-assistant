@@ -1,0 +1,19 @@
+:root { font-family: system-ui, sans-serif; color: #172b45; background: #f4f7fb; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 800px; margin: 64px auto; padding: 0 24px; }
+h1 { font-size: clamp(26px, 5vw, 36px); margin: 12px 0; }
+p { line-height: 1.7; }
+.eyebrow { color: #52657d; }
+#health { font-size: 14px; color: #52657d; }
+article { margin-top: 28px; padding: 28px; background: white; border: 1px solid #dce4ee; border-radius: 16px; }
+.badge { display: inline-block; padding: 5px 12px; border-radius: 20px; background: #fff0c2; color: #705000; font-weight: 600; }
+h2 { font-size: 22px; }
+dl { margin: 24px 0; }
+dl div { display: flex; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid #edf0f5; }
+dt { color: #52657d; }
+dd { margin: 0; text-align: right; font-weight: 600; }
+aside { padding: 20px; background: #eff5ff; border-radius: 10px; }
+h3 { margin: 0; font-size: 16px; }
+.note { color: #52657d; font-size: 14px; margin-bottom: 0; }
+@media (max-width: 480px) { main { margin: 32px auto; padding: 0 16px; } article { padding: 20px; } }

@@ -1,0 +1,21 @@
+{
+  "name": "paypal-cancellation-assistant",
+  "version": "1.0.0",
+  "description": "商家付款授权取消审核助手的最小开发骨架",
+  "private": true,
+  "main": "server.js",
+  "engines": {
+    "node": ">=20.12.2"
+  },
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "5.3.0"
+  }
+}
