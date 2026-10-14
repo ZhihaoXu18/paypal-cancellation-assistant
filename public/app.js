@@ -13,10 +13,13 @@ async function checkHealth() {
 checkHealth();
 
 let sandboxOrderId;
+let currentSandbox;
+let merchantBusy = false;
 const sandboxStatus = document.getElementById('sandbox-status');
 const refreshButton = document.getElementById('refresh-sandbox');
 const approvals = new Map();
 document.getElementById('lookup-sandbox').addEventListener('click', async () => {
+  if (merchantBusy) return;
   const id = document.getElementById('existing-order-id').value.trim();
   if (!/^[A-Za-z0-9-]{1,64}$/.test(id)) { sandboxStatus.textContent = 'Enter a valid Sandbox order ID.'; return; }
   try {
@@ -24,21 +27,28 @@ document.getElementById('lookup-sandbox').addEventListener('click', async () => 
     sandboxStatus.textContent = 'Actual Sandbox status retrieved using read-only requests. No authorization was submitted.';
   } catch (error) { sandboxStatus.textContent = error.message; }
 });
-async function sandboxRequest(url, method = 'GET') {
-  const response = await fetch(url, { method, ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}) });
+async function sandboxRequest(url, method = 'GET', body = {}) {
+  const response = await fetch(url, { method, ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Sandbox request failed.');
   return data;
 }
 function displaySandbox(data) {
   sandboxOrderId = data.orderId;
-  refreshButton.disabled = false;
+  if (currentSandbox?.orderId !== data.orderId) document.getElementById('confirm-void').checked = false;
+  currentSandbox = data;
+  updateMerchantControls();
+  refreshButton.disabled = merchantBusy;
   const details = document.getElementById('sandbox-details');
   details.replaceChildren();
   for (const [label, value] of [
     ['PayPal order ID', data.orderId], ['Order status (PayPal)', data.orderStatus],
     ['Amount', `${data.currency} ${data.amount}`], ['Authorization ID', data.authorizationId || 'Not available'],
     ['Authorization status (PayPal)', data.authorizationStatus || 'Not yet retrieved'],
+    ['Local order state (simulated)', data.localOrderStatus === 'CANCELLED' ? 'Order cancelled' : 'Active'],
+    ['Shipment state (simulated)', data.shipmentStatus === 'NOT_SHIPPED' ? 'Not shipped' : 'Unknown or shipped'],
+    ['Capture count (last verified)', data.paymentFacts ? String(data.paymentFacts.captureCount) : 'Not yet verified for void'],
+    ['Void execution state', data.voidState || 'Not attempted'],
   ]) {
     const row = document.createElement('div');
     const term = document.createElement('dt'); term.textContent = label;
@@ -47,6 +57,7 @@ function displaySandbox(data) {
   }
 }
 refreshButton.addEventListener('click', async () => {
+  if (merchantBusy) return;
   refreshButton.disabled = true;
   sandboxStatus.textContent = 'Retrieving actual Sandbox status…';
   try {
@@ -68,6 +79,7 @@ async function loadSandboxCheckout() {
     await paypal.Buttons({
       fundingSource: paypal.FUNDING.PAYPAL,
       createOrder: async () => {
+        if (merchantBusy) throw new Error('A merchant operation is in progress.');
         sandboxStatus.textContent = 'Creating a CAD 100.00 Sandbox order…';
         const data = await sandboxRequest('/api/paypal/orders', 'POST');
         displaySandbox(data);
@@ -102,3 +114,58 @@ async function loadSandboxCheckout() {
   } catch { sandboxStatus.textContent = 'Sandbox checkout is unavailable. Check backend configuration, network connectivity, and PayPal Sandbox availability.'; }
 }
 loadSandboxCheckout();
+
+function updateMerchantControls() {
+  const data = currentSandbox;
+  const panel = document.getElementById('merchant-workflow');
+  panel.hidden = !data;
+  if (!data) return;
+  refreshButton.disabled = merchantBusy;
+  document.getElementById('lookup-sandbox').disabled = merchantBusy;
+  const alreadyVoided = data.authorizationStatus === 'VOIDED';
+  const confirmation = document.getElementById('confirm-void');
+  confirmation.disabled = merchantBusy || alreadyVoided || data.voidState === 'CONFIRMED';
+  if (alreadyVoided || data.voidState === 'CONFIRMED') confirmation.checked = false;
+  const eligible = data.localOrderStatus === 'CANCELLED' && data.shipmentStatus === 'NOT_SHIPPED' && data.authorizationStatus === 'CREATED';
+  document.getElementById('cancel-local-order').disabled = merchantBusy || data.localOrderStatus === 'CANCELLED';
+  document.getElementById('void-recommendation').textContent = data.authorizationStatus === 'VOIDED'
+    ? 'Authorization already voided. Bank funds availability may update later.'
+    : eligible
+      ? `Recommendation: Void authorization. Supporting facts: local Order cancelled; simulated Not shipped; PayPal authorization CREATED for CAD 100.00. ${data.paymentFacts ? `Last verified capture count: ${data.paymentFacts.captureCount}.` : 'Capture count has not yet been verified.'} Backend must verify ownership, amount, and no captures again before execution. Merchant approval required.`
+      : 'Void is blocked until the local order is cancelled, not shipped, and the authorization is eligible.';
+  document.getElementById('void-authorization').disabled = merchantBusy || !eligible || data.voidState === 'UNCERTAIN' || data.voidState === 'CONFIRMED' || !document.getElementById('confirm-void').checked;
+  const history = document.getElementById('action-history');
+  history.replaceChildren();
+  for (const event of data.audit || []) {
+    const item = document.createElement('li'); item.textContent = `${event.time}: ${event.action} — ${event.result}`; history.append(item);
+  }
+}
+document.getElementById('confirm-void').addEventListener('change', updateMerchantControls);
+document.getElementById('cancel-local-order').addEventListener('click', async () => {
+  if (!currentSandbox || merchantBusy) return;
+  const id = currentSandbox.orderId;
+  merchantBusy = true; updateMerchantControls();
+  try {
+    displaySandbox(await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(id)}/cancel`, 'POST'));
+    document.getElementById('confirm-void').checked = false;
+    sandboxStatus.textContent = 'Local order marked cancelled (simulated). PayPal order status was not changed. No void was executed.';
+  } catch (error) { sandboxStatus.textContent = error.message; }
+  finally { merchantBusy = false; updateMerchantControls(); }
+});
+document.getElementById('void-authorization').addEventListener('click', async () => {
+  const data = currentSandbox;
+  if (!data || merchantBusy || data.authorizationStatus === 'VOIDED' || data.voidState === 'CONFIRMED' || document.getElementById('void-authorization').disabled || !document.getElementById('confirm-void').checked) return;
+  if (!window.confirm(`Void Sandbox authorization ${data.authorizationId} for order ${data.orderId}, CAD 100.00? This is a real Sandbox API action. Bank funds availability may update later.`)) return;
+  merchantBusy = true; updateMerchantControls();
+  document.getElementById('confirm-void').checked = false;
+  sandboxStatus.textContent = 'Verifying current facts and requesting Sandbox void…';
+  try {
+    const result = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(data.orderId)}/void`, 'POST', { confirmed: true, orderId: data.orderId, authorizationId: data.authorizationId });
+    displaySandbox(result);
+    sandboxStatus.textContent = result.message;
+  } catch (error) {
+    sandboxStatus.textContent = `${error.message} No success is assumed. Refresh actual authorization status before any further confirmation.`;
+    // Block another click even if the error prevented the updated record reaching the browser.
+    currentSandbox.voidState = 'UNCERTAIN';
+  } finally { merchantBusy = false; updateMerchantControls(); }
+});

@@ -128,3 +128,19 @@ test('API errors expose only allowlisted issue codes, never raw PayPal details',
   });
   await assert.rejects(service.create('owner'), error => /ORDER_NOT_APPROVED/.test(error.message) && !/mock-secret|mock-token/.test(error.message));
 });
+
+test('Newly created orders initialize simulated fulfillment and can be cancelled locally without PayPal calls', async () => {
+  const { service, calls } = mock();
+  const created = await service.create('owner');
+  assert.equal(created.localOrderStatus, 'ACTIVE');
+  assert.equal(created.shipmentStatus, 'NOT_SHIPPED');
+  const count = calls.length;
+  const cancelled = service.cancel('ORDER-1', 'owner');
+  assert.equal(cancelled.localOrderStatus, 'CANCELLED');
+  assert.equal(cancelled.shipmentStatus, 'NOT_SHIPPED');
+  assert.equal(cancelled.orderStatus, 'CREATED');
+  assert.equal(cancelled.fulfillmentSimulated, true);
+  assert.equal(calls.length, count);
+  const repeated = service.cancel('ORDER-1', 'owner');
+  assert.equal(repeated.audit.length, 1);
+});

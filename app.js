@@ -34,10 +34,14 @@ function createApp(paypal = createPayPal()) {
       res.status(error instanceof SafeError ? error.status : 500).json({ error: error instanceof SafeError ? error.message : 'Sandbox operation failed.' });
     }
   };
+  app.use('/api/paypal', express.json({ limit: '2kb' }));
   app.get('/api/paypal/config', route(() => paypal.config()));
   app.post('/api/paypal/orders', route(req => paypal.create(req.sandboxSession)));
   app.post('/api/paypal/orders/:id/authorize', route(req => paypal.authorize(req.params.id, req.sandboxSession)));
+  app.post('/api/paypal/orders/:id/cancel', route(req => paypal.cancel(req.params.id, req.sandboxSession)));
+  app.post('/api/paypal/orders/:id/void', route(req => paypal.void(req.params.id, req.sandboxSession, req.body)));
   app.get('/api/paypal/orders/:id', route(req => paypal.status(req.params.id, req.sandboxSession)));
+  app.use((error, req, res, next) => { res.status(400).json({ error: 'Invalid JSON request.' }); });
   app.use(express.static(path.join(__dirname, 'public')));
   return app;
 }

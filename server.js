@@ -18,7 +18,14 @@ try {
     }
   }
 } catch { /* No recovery records have been created yet. */ }
-const app = createApp(createPayPal(process.env, fetch, recovered));
+function persistRecord(record) {
+  fs.mkdirSync(recoveryDirectory, { recursive: true, mode: 0o700 });
+  const destination = path.join(recoveryDirectory, `${record.orderId}.json`);
+  const temporary = `${destination}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(record, null, 2), { mode: 0o600 });
+  fs.renameSync(temporary, destination);
+}
+const app = createApp(createPayPal(process.env, fetch, recovered, persistRecord));
 
 const host = '127.0.0.1';
 const port = 3000;

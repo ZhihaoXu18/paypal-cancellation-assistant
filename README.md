@@ -4,7 +4,7 @@ Help merchants identify cancelled orders whose PayPal authorizations remain acti
 
 Verify the order and payment status, then **Void authorization**. **Merchant approval required**. Voiding an authorization does not guarantee immediate release of funds by the buyer's bank. **Refund payment** applies to captured payments and is a future feature; this mock payment has not been captured.
 
-The page uses Mock data only. A separate CLI checks PayPal Sandbox OAuth connectivity. Sandbox authorization is available in a separate panel. No capture, refund, void, database, or AI is implemented.
+The original example uses Mock data only. A separate CLI checks PayPal Sandbox OAuth connectivity. Sandbox authorization is available in a separate panel. Merchant-confirmed Sandbox void is available for eligible cancelled local orders. No capture, refund, database, or AI is implemented.
 
 ## Requirements and installation
 
@@ -45,7 +45,7 @@ Health endpoint: `GET http://127.0.0.1:3000/api/health`
 1. Start the server and open the local page.
 2. Confirm the **Mock data** badge on order `DEMO-1001`.
 3. Review CAD 100, **Order cancelled**, **Not shipped**, and **Payment authorized — not captured**. The mock authorization remains active.
-4. Review the **Void authorization** recommendation and **Merchant approval required** notice. The page has no payment action controls and does not execute the recommendation.
+4. Review the **Void authorization** recommendation and **Merchant approval required** notice. The Mock data panel has no payment action controls and does not execute the recommendation. The separate Sandbox panel supports explicitly confirmed void.
 5. Application status indicates local health endpoint connectivity, not PayPal connectivity.
 
 ## PayPal Sandbox connection check
@@ -92,13 +92,13 @@ The separate **Sandbox transaction** panel uses PayPal Checkout, not Mock data. 
 4. After buyer approval, the backend authorizes the order and retrieves actual authorization status. Check the displayed PayPal order ID, authorization ID, and authorization status. An order status of `COMPLETED` does not mean a payment was captured; authorization status is displayed separately.
 5. Use **Refresh actual authorization status** for read-only reconciliation. Buyer cancellation does not cancel the merchant order. Creating an order also does not mark it cancelled.
 
-This milestone contains no capture, refund, or void endpoints or actions. Authorization may place a hold on Sandbox funds; it does not capture payment. No end-to-end Sandbox success is claimed until the buyer approval and subsequent authorization/status checks have completed.
+There are no capture or refund endpoints or actions. Sandbox void is available only through the separate merchant-confirmed workflow. Authorization may place a hold on Sandbox funds; it does not capture payment. No end-to-end Sandbox success is claimed until the buyer approval and subsequent authorization/status checks have completed.
 
 ### Failure handling and storage
 
 Repeated approval callbacks share a pending authorization attempt. Each order has a stable server-generated `PayPal-Request-Id`. Once authorization has been attempted, a failed or uncertain result is never blindly reposted. Refresh checks the order for an existing authorization and then retrieves it directly. If no authorization is found, inspect the Sandbox account before creating another test order. Raw PayPal errors, tokens, credentials, and buyer details are not returned to the browser.
 
-Order IDs, authorization IDs, attempt state, and browser ownership are held in server memory. Restarting the server loses this state; existing orders cannot be reauthorized through this app after a restart. Keep the server running during approval. This is a local development demo, without a database, production login, or durable reconciliation. A same-site HttpOnly session cookie scopes transactions to the browser session; cross-origin mutations and non-JSON requests are rejected.
+Order IDs, authorization IDs, attempt state, and browser ownership are held in server memory. Restarting the server loses this state; existing orders cannot be reauthorized through this app after a restart. Keep the server running during approval. This is a local development demo, without a database or production login. Merchant cancellation and void attempts are persisted locally as described below. A same-site HttpOnly session cookie scopes transactions to the browser session; cross-origin mutations and non-JSON requests are rejected.
 
 Endpoints:
 
@@ -127,4 +127,35 @@ node scripts/paypal-order-reconcile.js ORDER_ID --authorize
 
 The command rechecks eligibility immediately before a single authorization attempt, uses a stable request ID, and writes an exclusive attempt guard under ignored `.sandbox-runtime/`. It never blindly retries an existing attempt, creates replacement orders, or captures payments. Raw errors are suppressed. Successful authorization IDs are stored before querying actual authorization status. If a request outcome is uncertain, run the read-only command only.
 
-Restarting the server loads these operator recovery records as read-only. Use **Load existing order status** with the known order ID to display the actual authorization. Recovered orders cannot be authorized through the browser. Recovery files contain transaction IDs and attempt metadata, not credentials or tokens, and are excluded from Git. This operator recovery lookup is local-demo functionality, not production access control.
+Restarting the server loads these operator recovery records without allowing reauthorization. Status lookup is read-only; the explicit merchant workflow can cancel simulated local fulfillment and void an eligible authorization. Use **Load existing order status** with the known order ID to display the actual authorization. Recovered orders cannot be authorized through the browser. Recovery files contain transaction IDs and attempt metadata, not credentials or tokens, and are excluded from Git. This operator recovery lookup is local-demo functionality, not production access control.
+
+
+## Merchant cancellation and Void authorization
+
+Fulfillment is **simulated local data**: a new or recovered order starts Active and **Not shipped**, independently of PayPal order status. Only **Mark local order cancelled (simulated)** sets the local order to **Order cancelled**; no PayPal mutation is made by cancellation. A cancelled, unshipped order with an authorization in CREATED receives a **Void authorization** recommendation and supporting facts. Capture absence is verified at execution, not assumed from a browser label.
+
+To confirm through the UI:
+
+1. Open the Sandbox panel and use **Load existing order status** with your existing order ID. Do not create a replacement order.
+2. Review the actual authorization ID and status, CAD 100.00 amount, and clearly labelled simulated fulfillment state.
+3. Click **Mark local order cancelled (simulated)**. PayPal order status remains separate.
+4. Review the recommendation and check the explicit merchant approval checkbox.
+5. Click **Confirm and void Sandbox authorization** and accept the final confirmation dialog showing both IDs and CAD 100.00. **This final confirmation sends a real Sandbox void request if all backend checks pass.** Dismissing the dialog sends no request.
+6. Success requires a subsequent independent PayPal GET confirming authorization status **VOIDED**. Bank funds availability may update later; immediate availability is not guaranteed.
+
+Before a void POST, the backend independently retrieves the current order and authorization. It requires local CANCELLED and NOT_SHIPPED, AUTHORIZE intent, exactly one purchase unit and one matching authorization, CAD 100.00 on both resources, matching related order ID, no capture records or related capture ID, and eligible authorization status. Missing/inconsistent facts, shipped orders, or captured payments stop execution. VOIDED returns an already-voided result without another POST.
+
+Concurrent attempts are blocked. A stable request ID and UNCERTAIN guard are saved before sending a void. A timeout/API error is followed by read-only reconciliation and is not reported as success unless VOIDED is verified. An unconfirmed outcome blocks another POST until **Refresh actual authorization status** successfully rechecks facts. A still-CREATED authorization becomes RETRY_READY; a retry requires a new merchant confirmation and another fresh verification. There is no automatic retry.
+
+Action time, order/authorization IDs, local simulated state, request ID, guard, and sanitized results are saved atomically in ignored `.sandbox-runtime/` JSON files. These records contain no credentials, tokens, headers, or buyer information. If the record cannot be saved, execution stops. On restart, pending UNCERTAIN guards remain blocked until read-only reconciliation. Normal checkout state is in memory until a merchant cancellation/void action persists its record. This remains a single-process local demo; it is not a production multi-worker payment service.
+
+Additional endpoints:
+
+- `POST /api/paypal/orders/:id/cancel`: cancel simulated local fulfillment only.
+- `POST /api/paypal/orders/:id/void`: requires JSON `confirmed: true` plus matching `orderId` and `authorizationId`; executes the guarded workflow.
+
+`lib/void-workflow.js` implements verification, confirmation, concurrency guards, reconciliation, and audit events. Mock tests cover eligible, shipped, captured, already-voided, mismatched/missing facts, explicit confirmation, duplicate/concurrent execution, persistence failure, and timeout outcomes. They do not execute a real Sandbox void. Capture and Refund payment remain unimplemented.
+
+Newly created orders initialize the simulated local state explicitly to ACTIVE / NOT_SHIPPED. Repeating local cancellation is idempotent and does not add duplicate cancellation events. The supporting facts show the capture count from the latest verified order/authorization lookup, or clearly state that it is not yet verified. These snapshots are informational: void execution always retrieves and validates fresh facts again.
+
+When the actual authorization status is VOIDED, the UI shows “Authorization already voided”, clears and disables the confirmation checkbox, and disables the execution button. Stale callbacks are blocked in the frontend; the backend independently verifies an already-voided authorization and sends no additional void POST.

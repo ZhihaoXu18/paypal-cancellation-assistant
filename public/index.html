@@ -35,7 +35,7 @@
         <span class="badge">Sandbox transaction · Not mock data</span>
         <h2 id="sandbox-title">Authorize a CAD 100.00 test order</h2>
         <p>Sandbox only. Merchant approval required. Use your Sandbox Personal account to approve checkout. This creates an authorization, not a captured payment.</p>
-        <p>Creating this order does not mark it cancelled. No capture, refund, or void operations are available.</p>
+        <p>Creating this order does not mark it cancelled. Capture and refund operations are not available.</p>
         <div id="paypal-buttons"></div>
         <p id="sandbox-status" role="status">Loading Sandbox checkout…</p>
         <dl id="sandbox-details"></dl>
@@ -43,6 +43,17 @@
         <input id="existing-order-id" type="text" maxlength="64" autocomplete="off">
         <button id="lookup-sandbox" type="button">Load existing order status</button>
         <button id="refresh-sandbox" type="button" disabled>Refresh actual authorization status</button>
+        <section id="merchant-workflow" hidden aria-labelledby="merchant-title">
+          <h3 id="merchant-title">Merchant cancellation and void review</h3>
+          <p>Fulfillment state is simulated local data, separate from PayPal order status.</p>
+          <button id="cancel-local-order" type="button">Mark local order cancelled (simulated)</button>
+          <p id="void-recommendation" role="status"></p>
+          <label><input id="confirm-void" type="checkbox"> I confirm this local order is cancelled and not shipped, and approve Void authorization for the displayed Sandbox authorization.</label>
+          <button id="void-authorization" type="button" disabled>Confirm and void Sandbox authorization</button>
+          <p>Merchant approval required. Current payment facts are verified again on the backend before execution. Bank funds availability may update later.</p>
+          <h3>Action history</h3>
+          <ul id="action-history"></ul>
+        </section>
       </article>
     </main>
   </body>
