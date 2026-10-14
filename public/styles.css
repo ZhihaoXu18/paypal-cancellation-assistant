@@ -17,3 +17,7 @@ aside { padding: 20px; background: #eff5ff; border-radius: 10px; }
 h3 { margin: 0; font-size: 16px; }
 .note { color: #52657d; font-size: 14px; margin-bottom: 0; }
 @media (max-width: 480px) { main { margin: 32px auto; padding: 0 16px; } article { padding: 20px; } }
+
+textarea { display: block; width: 100%; padding: 12px; margin: 12px 0; font: inherit; border: 1px solid #b5c3d5; border-radius: 8px; }
+button { padding: 10px 14px; margin: 8px 4px 8px 0; cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }

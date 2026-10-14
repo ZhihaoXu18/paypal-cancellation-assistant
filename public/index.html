@@ -43,6 +43,19 @@
         <input id="existing-order-id" type="text" maxlength="64" autocomplete="off">
         <button id="lookup-sandbox" type="button">Load existing order status</button>
         <button id="refresh-sandbox" type="button" disabled>Refresh actual authorization status</button>
+        <section aria-labelledby="request-title">
+          <h3 id="request-title">Customer request</h3>
+          <p id="analysis-order">Analysis needs only customer text. Selecting a Sandbox order is optional context; checkout or authorization is not required.</p>
+          <label for="customer-request">Untrusted customer message</label>
+          <textarea id="customer-request" rows="5" maxlength="4000" placeholder="Paste the customer's request, including any order references."></textarea>
+          <button id="analyze-request" type="button" aria-describedby="analysis-status" disabled>Analyze request</button>
+          <p id="analysis-status" role="status">Checking AI configuration…</p>
+          <aside aria-labelledby="analysis-title">
+            <h3 id="analysis-title">AI analysis — Unverified customer claims</h3>
+            <p>Separate from verified PayPal facts and simulated fulfillment. Analysis never approves cancellation or performs payment actions.</p>
+            <div id="request-analysis"></div>
+          </aside>
+        </section>
         <section id="merchant-workflow" hidden aria-labelledby="merchant-title">
           <h3 id="merchant-title">Merchant cancellation and void review</h3>
           <p>Fulfillment state is simulated local data, separate from PayPal order status.</p>

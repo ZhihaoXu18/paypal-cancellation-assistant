@@ -37,6 +37,7 @@ function displaySandbox(data) {
   sandboxOrderId = data.orderId;
   if (currentSandbox?.orderId !== data.orderId) document.getElementById('confirm-void').checked = false;
   currentSandbox = data;
+  updateAnalysisSelection(data.orderId);
   updateMerchantControls();
   refreshButton.disabled = merchantBusy;
   const details = document.getElementById('sandbox-details');
@@ -169,3 +170,79 @@ document.getElementById('void-authorization').addEventListener('click', async ()
     currentSandbox.voidState = 'UNCERTAIN';
   } finally { merchantBusy = false; updateMerchantControls(); }
 });
+
+let aiConfigured = false;
+let analysisConfigState = 'loading';
+let analysisBusy = false;
+function analysisUnavailableReason() {
+  if (analysisConfigState === 'loading') return 'Checking AI configuration…';
+  if (analysisConfigState === 'failed') return 'AI configuration unavailable. Reload the page to retry.';
+  if (!aiConfigured) return 'AI not configured. Configure the server AI provider and restart the server.';
+  if (analysisBusy) return 'Analysis is in progress. Please wait.';
+  const message = document.getElementById('customer-request').value || '';
+  if (!message.trim()) return 'Enter a customer request to enable analysis.';
+  if (message.length > 4000) return 'Customer request must be 1–4000 characters.';
+  return '';
+}
+function updateAnalysisControls(showStatus = true) {
+  const reason = analysisUnavailableReason();
+  const button = document.getElementById('analyze-request');
+  button.disabled = !!reason;
+  button.title = reason;
+  document.getElementById('customer-request').disabled = analysisBusy;
+  if (showStatus) document.getElementById('analysis-status').textContent = reason || 'AI analysis ready. Customer claims remain unverified.';
+}
+document.getElementById('customer-request').addEventListener('input', () => updateAnalysisControls());
+let analysisGeneration = 0;
+let analysisOrderId;
+function updateAnalysisSelection(id) {
+  if (analysisOrderId !== id) {
+    analysisGeneration++;
+    document.getElementById('request-analysis').replaceChildren();
+    analysisBusy = false;
+  }
+  analysisOrderId = id;
+  document.getElementById('analysis-order').textContent = `Selected order: ${id}. This association does not establish which order the customer means.`;
+  updateAnalysisControls();
+}
+async function loadAnalysisConfig() {
+  try {
+    const response = await fetch('/api/analysis/config');
+    if (!response.ok) throw new Error('Configuration unavailable');
+    const config = await response.json(); aiConfigured = config.configured === true;
+    analysisConfigState = 'ready';
+  } catch { aiConfigured = false; analysisConfigState = 'failed'; }
+  updateAnalysisControls();
+}
+document.getElementById('analyze-request').addEventListener('click', async () => {
+  if (analysisUnavailableReason()) { updateAnalysisControls(); return; }
+  const selectedOrderId = currentSandbox?.orderId;
+  const generation = ++analysisGeneration;
+  const status = document.getElementById('analysis-status');
+  analysisBusy = true;
+  updateAnalysisControls(false);
+  document.getElementById('request-analysis').replaceChildren();
+  status.textContent = 'Analyzing untrusted customer content… No order action is being taken.';
+  try {
+    const result = await sandboxRequest('/api/analysis', 'POST', { selectedOrderId, message: document.getElementById('customer-request').value });
+    if (generation !== analysisGeneration || currentSandbox?.orderId !== selectedOrderId) return;
+    const analysis = result.analysis;
+    const box = document.getElementById('request-analysis');
+    for (const [label, values] of [
+      ['Intent (unverified)', [analysis.intent]],
+      ['Explicit order references', analysis.orderReferences.map(item => `${item.reference} — quote: ${item.quote}`)],
+      ['Stated reason (unverified)', [analysis.reason?.text || 'Not stated']],
+      ['Supporting quotes', analysis.supportingQuotes], ['Review flags', analysis.reviewFlags],
+      ['Missing information', analysis.missingInformation], ['Clarification questions', analysis.clarificationQuestions],
+    ]) {
+      const title = document.createElement('h4'); title.textContent = label; box.append(title);
+      const list = document.createElement('ul');
+      for (const value of values.length ? values : ['None reported']) { const item = document.createElement('li'); item.textContent = value; list.append(item); }
+      box.append(list);
+    }
+    status.textContent = 'AI analysis complete. Unverified customer claims; merchant review required. No order or payment state changed.';
+  } catch (error) {
+    if (generation === analysisGeneration) status.textContent = error.message;
+  } finally { if (generation === analysisGeneration) { analysisBusy = false; updateAnalysisControls(false); } }
+});
+loadAnalysisConfig();

@@ -1,14 +1,28 @@
 const express = require('express');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { createRequestAnalyzer } = require('./lib/request-analysis');
+const { AnalysisError } = require('./lib/analysis-provider');
 const { createPayPal, SafeError } = require('./lib/paypal');
 
-function createApp(paypal = createPayPal()) {
+function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) {
   const app = express();
   const sessions = new Set();
   app.disable('x-powered-by');
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', application: 'paypal-cancellation-assistant' });
+  });
+  app.get('/api/analysis/config', (req, res) => {
+    res.set('Cache-Control', 'no-store').json({ configured: analyzer.configured === true });
+  });
+  app.post('/api/analysis', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.get('origin') && req.get('origin') !== 'http://127.0.0.1:3000') return res.status(403).json({ error: 'Request origin is not allowed.' });
+    if (!req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
+    next();
+  }, express.json({ limit: '24kb' }), async (req, res) => {
+    try { res.json(await analyzer.analyze(req.body)); }
+    catch (error) { res.status(error instanceof AnalysisError ? error.status : 500).json({ error: error instanceof AnalysisError ? error.message : 'AI analysis failed. No action was taken.' }); }
   });
   app.use('/api/paypal', (req, res, next) => {
     res.set('Cache-Control', 'no-store');

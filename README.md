@@ -4,7 +4,7 @@ Help merchants identify cancelled orders whose PayPal authorizations remain acti
 
 Verify the order and payment status, then **Void authorization**. **Merchant approval required**. Voiding an authorization does not guarantee immediate release of funds by the buyer's bank. **Refund payment** applies to captured payments and is a future feature; this mock payment has not been captured.
 
-The original example uses Mock data only. A separate CLI checks PayPal Sandbox OAuth connectivity. Sandbox authorization is available in a separate panel. Merchant-confirmed Sandbox void is available for eligible cancelled local orders. No capture, refund, database, or AI is implemented.
+The original example uses Mock data only. A separate CLI checks PayPal Sandbox OAuth connectivity. Sandbox authorization is available in a separate panel. Merchant-confirmed Sandbox void is available for eligible cancelled local orders. No capture, refund, or database is implemented. Customer-request AI analysis is isolated from payment actions and requires a separately configured provider.
 
 ## Requirements and installation
 
@@ -159,3 +159,51 @@ Additional endpoints:
 Newly created orders initialize the simulated local state explicitly to ACTIVE / NOT_SHIPPED. Repeating local cancellation is idempotent and does not add duplicate cancellation events. The supporting facts show the capture count from the latest verified order/authorization lookup, or clearly state that it is not yet verified. These snapshots are informational: void execution always retrieves and validates fresh facts again.
 
 When the actual authorization status is VOIDED, the UI shows “Authorization already voided”, clears and disables the confirmation checkbox, and disables the execution button. Stale callbacks are blocked in the frontend; the backend independently verifies an already-voided authorization and sends no additional void POST.
+
+
+## AI-assisted customer request analysis
+
+No existing AI vendor integration was found in the source or dependencies. The implementation now uses a direct **OpenAI Responses API adapter** with strict JSON Schema Structured Outputs. Mocked providers are used only in tests. No paid live AI request has been run or verified. Missing configuration displays **AI not configured**; the application never substitutes mock analysis in the UI.
+
+Use **Customer request** and **Analyze request** without requiring checkout or payment authorization. An optional selected order is context for review only, not automatically bound to the request. Switching orders clears the result; a stale in-flight result cannot be displayed for the new selection. The separate panel is labelled **AI analysis — Unverified customer claims**, independently of verified payment facts and simulated fulfillment.
+
+Endpoints:
+
+- `GET /api/analysis/config`: returns only a configured boolean, never credentials or model settings.
+- `POST /api/analysis`: JSON `{ "selectedOrderId": "ORDER-1", "message": "Please cancel order ORDER-1." }` (message length 1–4000).
+
+Validated output includes intent (`cancellation_request`, `refund_request`, `status_question`, `other`, `unclear`), explicitly quoted order references, a verbatim reason if stated, supporting quotes, missing information, clarification questions, and server-generated review flags. The model output must have the exact schema; unsupported fields, invented references, reasons without evidence, non-verbatim quotes, and malformed outputs are rejected. A conservative server extractor adds recognizable references omitted by the model. References it cannot recognize require clarification rather than guessing.
+
+An explicitly labelled reference such as `order TEST-123` establishes the alphabetic prefix for other literal identifiers in the same message, including `Actually, cancel TEST-456 instead.` Both retain source evidence and remain flagged for merchant review; the correction never silently chooses an order. Unrelated numbers, dates, other SKU prefixes, and fabricated references are not accepted. Validation failures expose only fixed rule and field names, never the failing value. HTTP 429 diagnostics expose only allowlisted `error.type` and `error.code` values, without raw provider messages or automatic retries.
+
+The selected order ID is not sent to the provider. Missing references, relative references such as “the second order”, multiple references, or references conflicting with the selection are flagged for merchant review. Customer text is separated from application instructions, treated as untrusted input, and supplied with no tools. Prompt-injection detection is advisory, not a guarantee of correct classification: all AI/customer claims remain unverified and require human review. Crucially, the analysis module has no PayPal client, no state-store access, and no capability to approve cancellation or execute payments. Refund requests are classified only; Refund payment is not implemented.
+
+### Configure OpenAI locally
+
+The gateway requirement has been removed. The backend uses Node.js built-in fetch against the fixed endpoint `https://api.openai.com/v1/responses`; no gateway service or additional package is required.
+
+1. Open your existing root `.env` yourself and add the two entries below. Preserve existing PayPal credentials; do not replace `.env` with the example template.
+2. Set `OPENAI_API_KEY` to your OpenAI API project credential and choose a model supported by your project that supports Responses and Structured Outputs. `gpt-4.1-mini` is a documented supported example. There is no hidden model default: missing key or model displays **AI not configured**.
+3. Restart `npm run dev` or `npm start` to load the configuration. Changing `.env` alone does not guarantee a running server reloads credentials.
+4. Load your existing Sandbox order. Once you are ready to incur an API charge, enter customer text and click **Analyze request**. Loading the page/configuration does not send an OpenAI request.
+
+```dotenv
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+`.env.example` contains placeholders only; the actual `.env` remains ignored and must never be committed. Do not paste credentials into customer text. Previous `AI_PROVIDER`, `AI_API_URL`, `AI_API_KEY`, and `AI_MODEL` gateway settings are no longer used. Model support does not guarantee account access, available balance, or rate-limit capacity; API errors are sanitized and no automatic retry is sent.
+
+The request uses `text.format` with `type: json_schema`, `strict: true`, all fields required, and `additionalProperties: false` on every object. The schema preserves intent, references, nullable reason evidence, supporting quotes, missing information, and clarification questions. After receiving completed JSON, independent application validation still checks all supporting quotes are exact substrings and order references/reasons have literal evidence. A schema-conforming invented claim is rejected.
+
+Only the customer message is supplied as user input, alongside fixed application instructions and the schema. No selected-order context, PayPal credentials/tokens, payment or fulfillment facts, or buyer account details are included. No tools are configured. Customer text itself is sent as entered, so include only the text needed for analysis. `store: false` disables Responses application-state storage; it is not a promise that all provider-side logging or retention is disabled. See OpenAI's data controls for provider policy.
+
+Refusals, incomplete responses (including token limits or content filtering), failed responses, malformed/missing output, network failures, 20-second timeouts, and API errors are rejected with fixed English messages. Raw errors, refusal text, credentials, and model output are not logged. No partial result or mock fallback is shown as live analysis, and no automatic paid retries occur. Analysis remains read-only and has no PayPal client or order-state mutation capability.
+
+`lib/analysis-provider.js` defines the OpenAI request and strict schema. `lib/request-analysis.js` preserves the application-level evidence validation and review flags. Tests use fake keys and injected mocked API responses, never `.env` or paid requests. The adapter tests verify refusals/incomplete/error handling, credential isolation, model configuration, exact evidence, and no fallback/retry; existing PayPal and read-only analysis tests remain in the suite.
+
+Official documentation checked for this implementation:
+
+- [Structured Outputs in the Responses API](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses)
+- [GPT-4.1 mini model support](https://developers.openai.com/api/docs/models/gpt-4.1-mini)
+- [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data)
