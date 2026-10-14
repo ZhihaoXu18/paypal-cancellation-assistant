@@ -15,6 +15,11 @@ checkHealth();
 let sandboxOrderId;
 let currentSandbox;
 let merchantBusy = false;
+let requestReview;
+function currentCancellationReview() {
+  return !!requestReview && requestReview.message === document.getElementById('customer-request').value &&
+    requestReview.selectedOrderId === currentSandbox?.orderId && requestReview.review.canReviewCancellation === true;
+}
 const sandboxStatus = document.getElementById('sandbox-status');
 const refreshButton = document.getElementById('refresh-sandbox');
 const approvals = new Map();
@@ -39,6 +44,7 @@ function displaySandbox(data) {
   currentSandbox = data;
   updateAnalysisSelection(data.orderId);
   updateMerchantControls();
+  renderRequestReview();
   refreshButton.disabled = merchantBusy;
   const details = document.getElementById('sandbox-details');
   details.replaceChildren();
@@ -121,20 +127,24 @@ function updateMerchantControls() {
   const panel = document.getElementById('merchant-workflow');
   panel.hidden = !data;
   if (!data) return;
+  updateAnalysisControls(false);
   refreshButton.disabled = merchantBusy;
   document.getElementById('lookup-sandbox').disabled = merchantBusy;
   const alreadyVoided = data.authorizationStatus === 'VOIDED';
   const confirmation = document.getElementById('confirm-void');
-  confirmation.disabled = merchantBusy || alreadyVoided || data.voidState === 'CONFIRMED';
+  confirmation.disabled = merchantBusy || !currentCancellationReview() || alreadyVoided || data.voidState === 'CONFIRMED';
   if (alreadyVoided || data.voidState === 'CONFIRMED') confirmation.checked = false;
   const eligible = data.localOrderStatus === 'CANCELLED' && data.shipmentStatus === 'NOT_SHIPPED' && data.authorizationStatus === 'CREATED';
-  document.getElementById('cancel-local-order').disabled = merchantBusy || data.localOrderStatus === 'CANCELLED';
+  document.getElementById('confirm-cancellation').disabled = merchantBusy || !currentCancellationReview();
+  document.getElementById('cancel-local-order').disabled = merchantBusy || data.localOrderStatus === 'CANCELLED' || !currentCancellationReview() || !document.getElementById('confirm-cancellation').checked;
   document.getElementById('void-recommendation').textContent = data.authorizationStatus === 'VOIDED'
     ? 'Authorization already voided. Bank funds availability may update later.'
+    : !currentCancellationReview()
+      ? 'Cancellation and void review blocked: analyze a cancellation request with exactly one reference matching the selected order. Resolve references manually. Matching is not customer authentication or merchant approval.'
     : eligible
       ? `Recommendation: Void authorization. Supporting facts: local Order cancelled; simulated Not shipped; PayPal authorization CREATED for CAD 100.00. ${data.paymentFacts ? `Last verified capture count: ${data.paymentFacts.captureCount}.` : 'Capture count has not yet been verified.'} Backend must verify ownership, amount, and no captures again before execution. Merchant approval required.`
       : 'Void is blocked until the local order is cancelled, not shipped, and the authorization is eligible.';
-  document.getElementById('void-authorization').disabled = merchantBusy || !eligible || data.voidState === 'UNCERTAIN' || data.voidState === 'CONFIRMED' || !document.getElementById('confirm-void').checked;
+  document.getElementById('void-authorization').disabled = merchantBusy || !currentCancellationReview() || !eligible || data.voidState === 'UNCERTAIN' || data.voidState === 'CONFIRMED' || !document.getElementById('confirm-void').checked;
   const history = document.getElementById('action-history');
   history.replaceChildren();
   for (const event of data.audit || []) {
@@ -142,12 +152,15 @@ function updateMerchantControls() {
   }
 }
 document.getElementById('confirm-void').addEventListener('change', updateMerchantControls);
+document.getElementById('confirm-cancellation').addEventListener('change', updateMerchantControls);
 document.getElementById('cancel-local-order').addEventListener('click', async () => {
-  if (!currentSandbox || merchantBusy) return;
+  if (!currentSandbox || merchantBusy || !currentCancellationReview() || !document.getElementById('confirm-cancellation').checked || document.getElementById('cancel-local-order').disabled) return;
   const id = currentSandbox.orderId;
+  const review = requestReview;
   merchantBusy = true; updateMerchantControls();
   try {
-    displaySandbox(await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(id)}/cancel`, 'POST'));
+    displaySandbox(await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(id)}/cancel`, 'POST', { reviewId: review.review.reviewId, message: review.message, confirmed: true }));
+    document.getElementById('confirm-cancellation').checked = false;
     document.getElementById('confirm-void').checked = false;
     sandboxStatus.textContent = 'Local order marked cancelled (simulated). PayPal order status was not changed. No void was executed.';
   } catch (error) { sandboxStatus.textContent = error.message; }
@@ -155,13 +168,13 @@ document.getElementById('cancel-local-order').addEventListener('click', async ()
 });
 document.getElementById('void-authorization').addEventListener('click', async () => {
   const data = currentSandbox;
-  if (!data || merchantBusy || data.authorizationStatus === 'VOIDED' || data.voidState === 'CONFIRMED' || document.getElementById('void-authorization').disabled || !document.getElementById('confirm-void').checked) return;
+  if (!data || merchantBusy || !currentCancellationReview() || data.authorizationStatus === 'VOIDED' || data.voidState === 'CONFIRMED' || document.getElementById('void-authorization').disabled || !document.getElementById('confirm-void').checked) return;
   if (!window.confirm(`Void Sandbox authorization ${data.authorizationId} for order ${data.orderId}, CAD 100.00? This is a real Sandbox API action. Bank funds availability may update later.`)) return;
   merchantBusy = true; updateMerchantControls();
   document.getElementById('confirm-void').checked = false;
   sandboxStatus.textContent = 'Verifying current facts and requesting Sandbox void…';
   try {
-    const result = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(data.orderId)}/void`, 'POST', { confirmed: true, orderId: data.orderId, authorizationId: data.authorizationId });
+    const result = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(data.orderId)}/void`, 'POST', { confirmed: true, orderId: data.orderId, authorizationId: data.authorizationId, reviewId: requestReview.review.reviewId, message: requestReview.message });
     displaySandbox(result);
     sandboxStatus.textContent = result.message;
   } catch (error) {
@@ -175,6 +188,7 @@ let aiConfigured = false;
 let analysisConfigState = 'loading';
 let analysisBusy = false;
 function analysisUnavailableReason() {
+  if (merchantBusy) return 'A merchant operation is in progress. Please wait.';
   if (analysisConfigState === 'loading') return 'Checking AI configuration…';
   if (analysisConfigState === 'failed') return 'AI configuration unavailable. Reload the page to retry.';
   if (!aiConfigured) return 'AI not configured. Configure the server AI provider and restart the server.';
@@ -189,17 +203,51 @@ function updateAnalysisControls(showStatus = true) {
   const button = document.getElementById('analyze-request');
   button.disabled = !!reason;
   button.title = reason;
-  document.getElementById('customer-request').disabled = analysisBusy;
+  document.getElementById('customer-request').disabled = merchantBusy;
   if (showStatus) document.getElementById('analysis-status').textContent = reason || 'AI analysis ready. Customer claims remain unverified.';
 }
-document.getElementById('customer-request').addEventListener('input', () => updateAnalysisControls());
+document.getElementById('customer-request').addEventListener('input', () => { invalidateRequestReview(); updateAnalysisControls(); });
 let analysisGeneration = 0;
 let analysisOrderId;
+function invalidateRequestReview() {
+  analysisGeneration++;
+  requestReview = undefined;
+  analysisBusy = false;
+  document.getElementById('request-analysis').replaceChildren();
+  document.getElementById('confirm-cancellation').checked = false;
+  document.getElementById('confirm-void').checked = false;
+  renderRequestReview();
+  updateMerchantControls();
+}
+function renderRequestReview() {
+  const panel = document.getElementById('request-review');
+  panel.replaceChildren();
+  const data = currentSandbox;
+  const analysis = requestReview?.analysis;
+  const match = requestReview?.review;
+  const statusText = {
+    matched: 'One literal reference matches the selected order.',
+    mismatched: 'The reference differs from the selected order. Resolve manually and analyze again.',
+    missing_reference: 'No explicit order reference. Obtain the exact order ID and analyze again.',
+    ambiguous_reference: 'Relative order reference is ambiguous. Obtain an explicit ID and analyze again.',
+    multiple_references: 'Multiple references, including corrections, require manual resolution. No order was selected automatically.',
+    no_selected_order: 'Select and load an order manually, then analyze again.',
+  };
+  for (const [label, values] of [
+    ['Unverified customer intent and claims', analysis ? [analysis.intent, analysis.reason?.text || 'No stated reason', ...analysis.orderReferences.map(item => `${item.reference} — quote: ${item.quote}`)] : ['No current analysis. Analyze the current customer text.']],
+    ['Order-reference match result (backend)', [statusText[match?.status] || 'Not evaluated.', 'A match is not customer authentication or approval to cancel.', match?.canReviewCancellation ? 'Eligible for manual merchant cancellation review only.' : 'Cancellation review blocked. Refunds and status questions cannot execute cancellation.']],
+    ['Verified PayPal facts (last retrieved snapshot)', data ? [`Order: ${data.orderId}`, `Order status: ${data.orderStatus || 'Not retrieved'}`, `Authorization: ${data.authorizationId || 'Not retrieved'}`, `Authorization status: ${data.authorizationStatus || 'Not retrieved'}`, `Amount: ${data.currency || 'Unknown'} ${data.amount || 'Unknown'}`, `Capture count: ${data.paymentFacts?.captureCount ?? 'Not verified'}`, `Verified at: ${data.paymentFacts?.verifiedAt || 'No void-eligibility verification yet'}`] : ['No selected order facts. Load an order using read-only lookup.']],
+    ['Simulated local cancellation and shipment facts', data ? [`Cancellation: ${data.localOrderStatus || 'Unknown'}`, `Shipment: ${data.shipmentStatus || 'Unknown'}`] : ['No local order selected.']],
+  ]) {
+    const title = document.createElement('h4'); title.textContent = label; panel.append(title);
+    const list = document.createElement('ul');
+    for (const value of values) { const item = document.createElement('li'); item.textContent = value; list.append(item); }
+    panel.append(list);
+  }
+}
 function updateAnalysisSelection(id) {
   if (analysisOrderId !== id) {
-    analysisGeneration++;
-    document.getElementById('request-analysis').replaceChildren();
-    analysisBusy = false;
+    invalidateRequestReview();
   }
   analysisOrderId = id;
   document.getElementById('analysis-order').textContent = `Selected order: ${id}. This association does not establish which order the customer means.`;
@@ -217,6 +265,8 @@ async function loadAnalysisConfig() {
 document.getElementById('analyze-request').addEventListener('click', async () => {
   if (analysisUnavailableReason()) { updateAnalysisControls(); return; }
   const selectedOrderId = currentSandbox?.orderId;
+  const message = document.getElementById('customer-request').value;
+  invalidateRequestReview();
   const generation = ++analysisGeneration;
   const status = document.getElementById('analysis-status');
   analysisBusy = true;
@@ -224,9 +274,12 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
   document.getElementById('request-analysis').replaceChildren();
   status.textContent = 'Analyzing untrusted customer content… No order action is being taken.';
   try {
-    const result = await sandboxRequest('/api/analysis', 'POST', { selectedOrderId, message: document.getElementById('customer-request').value });
-    if (generation !== analysisGeneration || currentSandbox?.orderId !== selectedOrderId) return;
+    const result = await sandboxRequest('/api/analysis', 'POST', { selectedOrderId, message });
+    if (generation !== analysisGeneration || currentSandbox?.orderId !== selectedOrderId || document.getElementById('customer-request').value !== message) return;
     const analysis = result.analysis;
+    requestReview = { selectedOrderId, message, analysis, review: result.review || { canReviewCancellation: false } };
+    renderRequestReview();
+    updateMerchantControls();
     const box = document.getElementById('request-analysis');
     for (const [label, values] of [
       ['Intent (unverified)', [analysis.intent]],
@@ -245,4 +298,5 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
     if (generation === analysisGeneration) status.textContent = error.message;
   } finally { if (generation === analysisGeneration) { analysisBusy = false; updateAnalysisControls(false); } }
 });
+renderRequestReview();
 loadAnalysisConfig();

@@ -56,10 +56,16 @@
             <div id="request-analysis"></div>
           </aside>
         </section>
+        <section aria-labelledby="request-review-title">
+          <h3 id="request-review-title">Request-to-order merchant review</h3>
+          <p>Resolve missing, ambiguous, multiple, or mismatched references manually. Correct the request or selected order, then analyze again. No order is selected automatically.</p>
+          <div id="request-review"></div>
+        </section>
         <section id="merchant-workflow" hidden aria-labelledby="merchant-title">
           <h3 id="merchant-title">Merchant cancellation and void review</h3>
           <p>Fulfillment state is simulated local data, separate from PayPal order status.</p>
-          <button id="cancel-local-order" type="button">Mark local order cancelled (simulated)</button>
+          <label><input id="confirm-cancellation" type="checkbox" disabled> I have independently verified the customer's authority and approve cancelling this selected local order. Reference matching alone is not authentication or approval.</label>
+          <button id="cancel-local-order" type="button" disabled>Confirm local cancellation (simulated)</button>
           <p id="void-recommendation" role="status"></p>
           <label><input id="confirm-void" type="checkbox"> I confirm this local order is cancelled and not shipped, and approve Void authorization for the displayed Sandbox authorization.</label>
           <button id="void-authorization" type="button" disabled>Confirm and void Sandbox authorization</button>

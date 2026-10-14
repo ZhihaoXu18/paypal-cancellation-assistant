@@ -132,13 +132,13 @@ Restarting the server loads these operator recovery records without allowing rea
 
 ## Merchant cancellation and Void authorization
 
-Fulfillment is **simulated local data**: a new or recovered order starts Active and **Not shipped**, independently of PayPal order status. Only **Mark local order cancelled (simulated)** sets the local order to **Order cancelled**; no PayPal mutation is made by cancellation. A cancelled, unshipped order with an authorization in CREATED receives a **Void authorization** recommendation and supporting facts. Capture absence is verified at execution, not assumed from a browser label.
+Fulfillment is **simulated local data**: a new or recovered order starts Active and **Not shipped**, independently of PayPal order status. **Confirm local cancellation (simulated)** sets the local order to **Order cancelled** after a matching cancellation request and explicit merchant approval; no PayPal mutation is made by cancellation. A current matching review plus a cancelled, unshipped order with an authorization in CREATED enables **Void authorization** review. Capture absence is verified at execution, not assumed from a browser label.
 
 To confirm through the UI:
 
 1. Open the Sandbox panel and use **Load existing order status** with your existing order ID. Do not create a replacement order.
 2. Review the actual authorization ID and status, CAD 100.00 amount, and clearly labelled simulated fulfillment state.
-3. Click **Mark local order cancelled (simulated)**. PayPal order status remains separate.
+3. Analyze a `cancellation_request` with exactly one explicit reference matching the selected order. Independently verify the customer's authority, check the cancellation approval checkbox, and click **Confirm local cancellation (simulated)**. PayPal order status remains separate.
 4. Review the recommendation and check the explicit merchant approval checkbox.
 5. Click **Confirm and void Sandbox authorization** and accept the final confirmation dialog showing both IDs and CAD 100.00. **This final confirmation sends a real Sandbox void request if all backend checks pass.** Dismissing the dialog sends no request.
 6. Success requires a subsequent independent PayPal GET confirming authorization status **VOIDED**. Bank funds availability may update later; immediate availability is not guaranteed.
@@ -151,8 +151,8 @@ Action time, order/authorization IDs, local simulated state, request ID, guard, 
 
 Additional endpoints:
 
-- `POST /api/paypal/orders/:id/cancel`: cancel simulated local fulfillment only.
-- `POST /api/paypal/orders/:id/void`: requires JSON `confirmed: true` plus matching `orderId` and `authorizationId`; executes the guarded workflow.
+- `POST /api/paypal/orders/:id/cancel`: requires JSON `confirmed: true`, current `reviewId`, and unchanged customer `message`; cancels simulated local fulfillment only.
+- `POST /api/paypal/orders/:id/void`: requires the same current review and unchanged message, JSON `confirmed: true`, and matching `orderId` and `authorizationId`; executes the guarded workflow.
 
 `lib/void-workflow.js` implements verification, confirmation, concurrency guards, reconciliation, and audit events. Mock tests cover eligible, shipped, captured, already-voided, mismatched/missing facts, explicit confirmation, duplicate/concurrent execution, persistence failure, and timeout outcomes. They do not execute a real Sandbox void. Capture and Refund payment remain unimplemented.
 
@@ -202,7 +202,19 @@ Refusals, incomplete responses (including token limits or content filtering), fa
 
 `lib/analysis-provider.js` defines the OpenAI request and strict schema. `lib/request-analysis.js` preserves the application-level evidence validation and review flags. Tests use fake keys and injected mocked API responses, never `.env` or paid requests. The adapter tests verify refusals/incomplete/error handling, credential isolation, model configuration, exact evidence, and no fallback/retry; existing PayPal and read-only analysis tests remain in the suite.
 
-Official documentation checked for this implementation:
+## Request-to-order matching and merchant review
+
+The backend compares validated literal references with the explicitly selected order ID using exact, case-sensitive equality. The model receives no selected-order context and does not decide the match. Analysis returns a separate `review` with `status`: `matched`, `mismatched`, `missing_reference`, `ambiguous_reference`, `multiple_references`, or `no_selected_order`.
+
+The **Request-to-order merchant review** panel separates unverified customer intent/claims, the backend match result, last-retrieved PayPal facts, and simulated local cancellation/shipment facts. Snapshots do not establish current void eligibility; all existing fresh backend checks still run before execution.
+
+Missing, relative, multiple (including corrections), and mismatched references block cancellation review. The merchant must obtain clarified customer text or manually load the appropriate order, then analyze again. The app never selects an order from customer text. Only `cancellation_request` plus exactly one matching reference enables the cancellation approval checkbox. Refund requests, status questions, and other intents cannot use cancellation or void execution. Matching is neither customer authentication nor approval: the merchant must independently establish authority and explicitly approve cancellation. Void also requires its separate checkbox and final confirmation dialog.
+
+Editing customer text or changing selected orders clears the review and both confirmations; stale analysis responses are ignored. Starting another analysis invalidates the previous server review, and out-of-order completions cannot restore it. Cancellation and void endpoints require a server-issued review bound to the browser session, selected order, and SHA-256 digest of the unchanged message, plus explicit confirmation. Reviews expire after 15 minutes and are lost on restart; analyze again when necessary. Review metadata is kept only in memory, without storing or logging customer text or raw model output. The message sent back for review validation is not submitted to OpenAI again.
+
+Analysis remains read-only. The review gate is an additional requirement on the existing merchant mutation routes; ownership, shipment state, local cancellation, amount/currency, authorization relationship, capture absence, duplicate guards, persistence, and reconciliation checks remain in place. Tests use mocked AI and payment providers, including local HTTP route tests; no live AI or PayPal verification is claimed.
+
+Official documentation checked for the OpenAI adapter implementation:
 
 - [Structured Outputs in the Responses API](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses)
 - [GPT-4.1 mini model support](https://developers.openai.com/api/docs/models/gpt-4.1-mini)

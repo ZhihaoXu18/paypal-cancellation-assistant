@@ -55,6 +55,9 @@ test('Void UI sends no request until checkbox and final merchant confirmation; r
   vm.runInContext(fs.readFileSync('public/app.js', 'utf8'), context);
   await new Promise(resolve => setImmediate(resolve));
   vm.runInContext("displaySandbox({orderId:'ORDER-1', authorizationId:'AUTH-1', localOrderStatus:'CANCELLED', shipmentStatus:'NOT_SHIPPED', authorizationStatus:'CREATED'})", context);
+  // Backend-issued matching cancellation review is required in addition to void confirmations.
+  nodes.get('customer-request').value = 'Cancel ORDER-1.';
+  vm.runInContext("requestReview = {message:'Cancel ORDER-1.', selectedOrderId:'ORDER-1', review:{canReviewCancellation:true,reviewId:'mock-review'}}; updateMerchantControls()", context);
   const button = nodes.get('void-authorization');
   assert.equal(button.disabled, true);
   await button.handlers.click();
@@ -67,7 +70,7 @@ test('Void UI sends no request until checkbox and final merchant confirmation; r
   await button.handlers.click();
   const sent = calls.filter(c => c.url.endsWith('/void'));
   assert.equal(sent.length, 1);
-  assert.deepEqual(JSON.parse(sent[0].options.body), { confirmed: true, orderId: 'ORDER-1', authorizationId: 'AUTH-1' });
+  assert.deepEqual(JSON.parse(sent[0].options.body), { confirmed: true, orderId: 'ORDER-1', authorizationId: 'AUTH-1', reviewId: 'mock-review', message: 'Cancel ORDER-1.' });
   assert.match(confirmationPrompt, /ORDER-1/);
   assert.match(confirmationPrompt, /AUTH-1/);
   assert.equal(nodes.get('confirm-void').checked, false);
@@ -107,16 +110,17 @@ test('Customer analysis uses only its analysis endpoint and never triggers a Pay
   assert.equal(vm.runInContext('currentSandbox.localOrderStatus', context), 'CANCELLED');
 });
 
-function analysisUI({ configured = true, configFails = false, analysisFails = false } = {}) {
+function analysisUI({ configured = true, configFails = false, analysisFails = false, analyzeResponse } = {}) {
   const nodes = new Map(), calls = [];
   let callbacks;
-  const node = () => ({ value: '', textContent: '', handlers: {}, addEventListener(event, handler) { this.handlers[event] = handler; }, replaceChildren() {}, append() {} });
+  const node = () => ({ value: '', textContent: '', children: [], handlers: {}, addEventListener(event, handler) { this.handlers[event] = handler; }, replaceChildren() { this.children = []; }, append(...children) { this.children.push(...children); } });
   const context = vm.createContext({ URLSearchParams, encodeURIComponent,
     document: { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node, head: { append(script) { script.onload(); } } },
     paypal: { FUNDING: { PAYPAL: 'paypal' }, Buttons(options) { callbacks = options; return { render: async () => {} }; } },
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
       if (url === '/api/analysis/config' && configFails) throw new Error('offline');
+      if (url === '/api/analysis' && analyzeResponse) return analyzeResponse(JSON.parse(options.body));
       const failed = url === '/api/analysis' && analysisFails;
       const data = url === '/api/analysis/config' ? { configured } : url === '/api/paypal/config' ? { clientId: 'mock-client' } : failed ? { error: 'AI unavailable. No action was taken.' } : url === '/api/analysis' ? { analysis: { intent: 'unclear', orderReferences: [], reason: null, supportingQuotes: ['Cancel my order.'], reviewFlags: [], missingInformation: [], clarificationQuestions: [] } } : { status: 'ok' };
       return { ok: !failed, json: async () => data };
@@ -153,6 +157,98 @@ test('Analysis accepts valid text without checkout and after CREATED checkout fa
   assert.equal(button.disabled, true);
   assert.match(ui.nodes.get('analysis-status').textContent, /1–4000/);
 });
+
+function matchingResponse(body, intent = 'cancellation_request') {
+  return { ok: true, json: async () => ({ selectedOrderId: body.selectedOrderId,
+    analysis: { intent, orderReferences: [{ reference: 'ORDER-1', quote: 'ORDER-1' }], reason: null,
+      supportingQuotes: [body.message], reviewFlags: [], missingInformation: [], clarificationQuestions: [] },
+    review: { status: body.selectedOrderId === 'ORDER-1' ? 'matched' : 'mismatched', canReviewCancellation: body.selectedOrderId === 'ORDER-1' && intent === 'cancellation_request', reviewId: 'mock-review' },
+  }) };
+}
+function selectReviewOrder(ui, id = 'ORDER-1') {
+  vm.runInContext(`displaySandbox({orderId:'${id}',orderStatus:'COMPLETED',currency:'CAD',amount:'100.00',authorizationId:'AUTH-1',authorizationStatus:'CREATED',localOrderStatus:'ACTIVE',shipmentStatus:'NOT_SHIPPED'})`, ui.context);
+}
+test('Matching cancellation requires manual confirmation; panel separates all four evidence sources', async () => {
+  const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body) });
+  await new Promise(resolve => setImmediate(resolve));
+  selectReviewOrder(ui);
+  const input = ui.nodes.get('customer-request');
+  input.value = 'Cancel ORDER-1.'; input.handlers.input();
+  await ui.nodes.get('analyze-request').handlers.click();
+  assert.equal(ui.nodes.get('cancel-local-order').disabled, true);
+  const labels = ui.nodes.get('request-review').children.filter(node => node.children.length === 0).map(node => node.textContent);
+  assert.deepEqual(labels, ['Unverified customer intent and claims', 'Order-reference match result (backend)', 'Verified PayPal facts (last retrieved snapshot)', 'Simulated local cancellation and shipment facts']);
+  const confirmation = ui.nodes.get('confirm-cancellation');
+  assert.equal(confirmation.disabled, false);
+  confirmation.checked = true; confirmation.handlers.change();
+  assert.equal(ui.nodes.get('cancel-local-order').disabled, false);
+  input.value = 'Refund ORDER-1.'; input.handlers.input();
+  assert.equal(confirmation.checked, false);
+  assert.equal(ui.nodes.get('cancel-local-order').disabled, true);
+  await ui.nodes.get('cancel-local-order').handlers.click();
+  assert.equal(ui.calls.filter(call => call.url.endsWith('/cancel')).length, 0);
+  assert.equal(vm.runInContext('requestReview', ui.context), undefined);
+});
+
+test('Changing selected order clears review and both merchant confirmations', async () => {
+  const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body) });
+  await new Promise(resolve => setImmediate(resolve));
+  selectReviewOrder(ui);
+  ui.nodes.get('customer-request').value = 'Cancel ORDER-1.';
+  await ui.nodes.get('analyze-request').handlers.click();
+  ui.nodes.get('confirm-cancellation').checked = true;
+  ui.nodes.get('confirm-void').checked = true;
+  selectReviewOrder(ui, 'ORDER-2');
+  assert.equal(vm.runInContext('requestReview', ui.context), undefined);
+  assert.equal(ui.nodes.get('confirm-cancellation').checked, false);
+  assert.equal(ui.nodes.get('confirm-void').checked, false);
+  assert.equal(ui.nodes.get('cancel-local-order').disabled, true);
+});
+
+for (const change of ['text', 'order']) {
+  test(`Stale analysis ignored after ${change} changes, without clearing a newer review`, async () => {
+    let release;
+    let count = 0;
+    const ui = analysisUI({ analyzeResponse: async body => {
+      if (++count === 1) await new Promise(resolve => { release = resolve; });
+      return matchingResponse(body);
+    } });
+    await new Promise(resolve => setImmediate(resolve));
+    selectReviewOrder(ui);
+    const input = ui.nodes.get('customer-request');
+    input.value = 'Cancel ORDER-1.';
+    const old = ui.nodes.get('analyze-request').handlers.click();
+    assert.equal(input.disabled, false);
+    if (change === 'text') { input.value = 'Cancel ORDER-1 please.'; input.handlers.input(); }
+    else selectReviewOrder(ui, 'ORDER-2');
+    // No request-to-order selection is performed by the response handler.
+    assert.equal(vm.runInContext('requestReview', ui.context), undefined);
+    await ui.nodes.get('analyze-request').handlers.click();
+    const latest = vm.runInContext('requestReview', ui.context);
+    release(); await old;
+    assert.equal(vm.runInContext('requestReview', ui.context), latest);
+    assert.equal(latest.message, input.value);
+    assert.equal(latest.selectedOrderId, change === 'order' ? 'ORDER-2' : 'ORDER-1');
+  });
+}
+
+for (const intent of ['refund_request', 'status_question']) {
+  test(`${intent} remains outside cancellation and void controls despite matching reference`, async () => {
+    const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body, intent) });
+    await new Promise(resolve => setImmediate(resolve));
+    selectReviewOrder(ui);
+    ui.nodes.get('customer-request').value = 'ORDER-1';
+    await ui.nodes.get('analyze-request').handlers.click();
+    ui.nodes.get('confirm-cancellation').checked = true;
+    ui.nodes.get('confirm-void').checked = true;
+    ui.nodes.get('confirm-cancellation').handlers.change();
+    assert.equal(ui.nodes.get('cancel-local-order').disabled, true);
+    assert.equal(ui.nodes.get('void-authorization').disabled, true);
+    await ui.nodes.get('cancel-local-order').handlers.click();
+    await ui.nodes.get('void-authorization').handlers.click();
+    assert.equal(ui.calls.filter(call => /\/(cancel|void)$/.test(call.url)).length, 0);
+  });
+}
 
 test('Analysis explains missing or failed configuration and restores controls after a provider failure', async () => {
   for (const options of [{ configured: false }, { configFails: true }, { analysisFails: true }]) {

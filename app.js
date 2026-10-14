@@ -1,14 +1,37 @@
 const express = require('express');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
-const { createRequestAnalyzer } = require('./lib/request-analysis');
+const { randomUUID, createHash } = require('node:crypto');
+const { createRequestAnalyzer, matchRequestToOrder } = require('./lib/request-analysis');
 const { AnalysisError } = require('./lib/analysis-provider');
 const { createPayPal, SafeError } = require('./lib/paypal');
 
 function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) {
   const app = express();
   const sessions = new Set();
+  const reviews = new Map();
+  const digest = message => createHash('sha256').update(message).digest('hex');
+  function requireCancellationReview(req) {
+    const review = reviews.get(req.sandboxSession);
+    if (!review?.review?.canReviewCancellation || review.id !== req.body.reviewId ||
+      review.selectedOrderId !== req.params.id || review.expiresAt <= Date.now() ||
+      typeof req.body.message !== 'string' || digest(req.body.message) !== review.messageDigest || req.body.confirmed !== true) {
+      throw new SafeError('A current matching cancellation review and explicit merchant confirmation are required. Resolve references and analyze again.', 409);
+    }
+    return review;
+  }
   app.disable('x-powered-by');
+  app.use('/api', (req, res, next) => {
+    const cookie = req.get('cookie') || '';
+    let session = cookie.match(/(?:^|;\s*)sandbox_session=([a-f0-9-]{36})(?:;|$)/)?.[1];
+    if (!sessions.has(session)) {
+      session = randomUUID(); sessions.add(session);
+      res.cookie('sandbox_session', session, { httpOnly: true, sameSite: 'strict', path: '/api' });
+      // Remove the previous narrower cookie so analysis and payment routes share one owner.
+      res.clearCookie('sandbox_session', { path: '/api/paypal' });
+    }
+    req.sandboxSession = session;
+    next();
+  });
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', application: 'paypal-cancellation-assistant' });
   });
@@ -21,7 +44,17 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
     if (!req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
     next();
   }, express.json({ limit: '24kb' }), async (req, res) => {
-    try { res.json(await analyzer.analyze(req.body)); }
+    const pending = { id: randomUUID() };
+    reviews.set(req.sandboxSession, pending);
+    try {
+      const result = await analyzer.analyze(req.body);
+      const review = matchRequestToOrder(result.analysis, req.body.selectedOrderId);
+      // A newer analysis in the same session supersedes this result, even if it finishes first.
+      if (reviews.get(req.sandboxSession) !== pending) return res.status(409).json({ error: 'Analysis superseded. Analyze the current request again.' });
+      Object.assign(pending, { review, selectedOrderId: req.body.selectedOrderId,
+        messageDigest: digest(req.body.message), expiresAt: Date.now() + 15 * 60 * 1000 });
+      res.json({ ...result, review: { ...review, reviewId: pending.id } });
+    }
     catch (error) { res.status(error instanceof AnalysisError ? error.status : 500).json({ error: error instanceof AnalysisError ? error.message : 'AI analysis failed. No action was taken.' }); }
   });
   app.use('/api/paypal', (req, res, next) => {
@@ -29,13 +62,6 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
     const origin = req.get('origin');
     if (origin && origin !== 'http://127.0.0.1:3000') return res.status(403).json({ error: 'Request origin is not allowed.' });
     if (req.method === 'POST' && !req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
-    const cookie = req.get('cookie') || '';
-    let session = cookie.match(/(?:^|;\s*)sandbox_session=([a-f0-9-]{36})(?:;|$)/)?.[1];
-    if (!sessions.has(session)) {
-      session = randomUUID(); sessions.add(session);
-      res.cookie('sandbox_session', session, { httpOnly: true, sameSite: 'strict', path: '/api/paypal' });
-    }
-    req.sandboxSession = session;
     next();
   });
   const route = (handler) => async (req, res) => {
@@ -48,12 +74,23 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
       res.status(error instanceof SafeError ? error.status : 500).json({ error: error instanceof SafeError ? error.message : 'Sandbox operation failed.' });
     }
   };
-  app.use('/api/paypal', express.json({ limit: '2kb' }));
+  const paymentJson = express.json({ limit: '2kb' });
+  const reviewJson = express.json({ limit: '24kb' });
+  app.use('/api/paypal', (req, res, next) => {
+    const parser = /\/orders\/[^/]+\/(?:cancel|void)$/.test(req.path) ? reviewJson : paymentJson;
+    parser(req, res, next);
+  });
   app.get('/api/paypal/config', route(() => paypal.config()));
   app.post('/api/paypal/orders', route(req => paypal.create(req.sandboxSession)));
   app.post('/api/paypal/orders/:id/authorize', route(req => paypal.authorize(req.params.id, req.sandboxSession)));
-  app.post('/api/paypal/orders/:id/cancel', route(req => paypal.cancel(req.params.id, req.sandboxSession)));
-  app.post('/api/paypal/orders/:id/void', route(req => paypal.void(req.params.id, req.sandboxSession, req.body)));
+  app.post('/api/paypal/orders/:id/cancel', route(req => {
+    requireCancellationReview(req);
+    return paypal.cancel(req.params.id, req.sandboxSession);
+  }));
+  app.post('/api/paypal/orders/:id/void', route(req => {
+    requireCancellationReview(req);
+    return paypal.void(req.params.id, req.sandboxSession, req.body);
+  }));
   app.get('/api/paypal/orders/:id', route(req => paypal.status(req.params.id, req.sandboxSession)));
   app.use((error, req, res, next) => { res.status(400).json({ error: 'Invalid JSON request.' }); });
   app.use(express.static(path.join(__dirname, 'public')));
