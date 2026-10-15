@@ -168,6 +168,67 @@ function matchingResponse(body, intent = 'cancellation_request') {
 function selectReviewOrder(ui, id = 'ORDER-1') {
   vm.runInContext(`displaySandbox({orderId:'${id}',orderStatus:'COMPLETED',currency:'CAD',amount:'100.00',authorizationId:'AUTH-1',authorizationStatus:'CREATED',localOrderStatus:'ACTIVE',shipmentStatus:'NOT_SHIPPED'})`, ui.context);
 }
+function visibleText(node) {
+  return [node.textContent, ...(node.children || []).map(visibleText)].join(' ');
+}
+for (const edited of ['Refund ORDER-1.', '', 'x'.repeat(4001)]) {
+  test(`Every customer edit immediately clears displayed analysis and confirmations (${edited.length} characters)`, async () => {
+    const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body) });
+    await new Promise(resolve => setImmediate(resolve));
+    selectReviewOrder(ui);
+    vm.runInContext("currentSandbox.localOrderStatus='CANCELLED'", ui.context);
+    const input = ui.nodes.get('customer-request');
+    input.value = 'Cancel ORDER-1.';
+    await ui.nodes.get('analyze-request').handlers.click();
+    assert.match(visibleText(ui.nodes.get('request-analysis')), /cancellation_request/);
+    assert.match(visibleText(ui.nodes.get('request-review')), /One literal reference matches/);
+    ui.nodes.get('confirm-cancellation').checked = true;
+    ui.nodes.get('confirm-void').checked = true;
+    ui.nodes.get('confirm-void').handlers.change();
+    assert.equal(ui.nodes.get('void-authorization').disabled, false);
+    const calls = ui.calls.length;
+    input.value = edited; input.handlers.input();
+    assert.match(ui.nodes.get('analysis-status').textContent, /^No current analysis\./);
+    assert.doesNotMatch(visibleText(ui.nodes.get('request-analysis')), /cancellation_request|Cancel ORDER-1/);
+    assert.match(visibleText(ui.nodes.get('request-analysis')), /No current analysis/);
+    assert.doesNotMatch(visibleText(ui.nodes.get('request-review')), /One literal reference matches|cancellation_request/);
+    assert.match(visibleText(ui.nodes.get('request-review')), /Not evaluated/);
+    for (const id of ['confirm-cancellation', 'confirm-void']) {
+      assert.equal(ui.nodes.get(id).checked, false);
+      assert.equal(ui.nodes.get(id).disabled, true);
+    }
+    for (const id of ['cancel-local-order', 'void-authorization']) assert.equal(ui.nodes.get(id).disabled, true);
+    assert.equal(ui.calls.length, calls);
+    assert.equal(vm.runInContext('currentSandbox.orderId', ui.context), 'ORDER-1');
+    assert.match(visibleText(ui.nodes.get('request-review')), /Cancellation: CANCELLED/);
+  });
+}
+
+for (const fails of [false, true]) {
+  test(`Editing without reanalysis ignores stale ${fails ? 'failure' : 'success'} responses`, async () => {
+    let release;
+    const ui = analysisUI({ analyzeResponse: async body => {
+      await new Promise(resolve => { release = resolve; });
+      if (fails) throw new Error('Old analysis failed');
+      return matchingResponse(body);
+    } });
+    await new Promise(resolve => setImmediate(resolve));
+    selectReviewOrder(ui);
+    const input = ui.nodes.get('customer-request');
+    input.value = 'Cancel ORDER-1.';
+    const pending = ui.nodes.get('analyze-request').handlers.click();
+    input.value = 'Refund ORDER-1.'; input.handlers.input();
+    const status = ui.nodes.get('analysis-status').textContent;
+    release(); await pending;
+    assert.match(status, /^No current analysis\./);
+    assert.equal(ui.nodes.get('analysis-status').textContent, status);
+    assert.equal(vm.runInContext('requestReview', ui.context), undefined);
+    assert.doesNotMatch(visibleText(ui.nodes.get('request-analysis')), /cancellation_request/);
+    assert.equal(ui.nodes.get('cancel-local-order').disabled, true);
+    assert.equal(ui.nodes.get('void-authorization').disabled, true);
+    assert.equal(ui.calls.filter(call => call.url === '/api/analysis').length, 1);
+  });
+}
 test('Matching cancellation requires manual confirmation; panel separates all four evidence sources', async () => {
   const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body) });
   await new Promise(resolve => setImmediate(resolve));

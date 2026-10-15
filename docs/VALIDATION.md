@@ -35,7 +35,9 @@ of the unchanged message. Source inspection confirms a 15-minute expiry check an
 in-memory storage only. Expiry and restart behavior have not received a dedicated
 automated test in this run. Customer identity remains a merchant responsibility.
 
-## Manual read-only acceptance (pending for this matching milestone)
+## Manual read-only acceptance checklist (full matching scenarios pending)
+
+The customer-text edit and status wording were manually verified as recorded below; the full matching checklist remains pending.
 
 Use an existing order that the local application can load. Do not create another
 transaction just to test matching. Each Analyze click can incur an AI charge.
@@ -63,3 +65,26 @@ that this newly integrated matching milestone has passed manual acceptance.
 - Repository visibility must be checked separately in GitHub Settings.
 - Before publication, inspect Git history as well as the latest tree for secrets.
   Ignore rules alone do not prove that no secrets were ever committed.
+
+## Customer-text edit invalidation — 2026-10-14
+
+### Verified browser findings
+
+Manual inspection of the existing Chrome tab at `http://127.0.0.1:3000/` reproduced the misleading status without clicking **Analyze request**. Editing customer text displayed **AI analysis ready. Customer claims remain unverified.** The old AI analysis had actually been cleared, the match result was **Not evaluated**, and both merchant confirmations and cancellation/void controls were disabled. The content that remained visible was the separate PayPal snapshot, simulated local facts, and action history; these are independent of customer text.
+
+Read-only retrieval of the running server's HTML and JavaScript confirmed byte-for-byte equality with the files on disk. No stale served files or browser-cache cause was demonstrated. The verified defect was misleading status wording, not retained old analysis.
+
+### Fix and manual verification
+
+- Empty or invalidated analysis now explicitly displays **No current analysis.** in the analysis area and status, with the applicable input/configuration guidance.
+- Every customer-text edit clears previous AI claims and the request-to-order match, unchecks both confirmations, and disables cancellation and void. Independent order facts remain visible.
+- Existing generation checks continue to ignore stale in-flight success and failure responses.
+- After refreshing the actual browser page, entering customer text without analyzing showed **No current analysis. Click Analyze request to analyze the current text.**, an empty-analysis placeholder, and **Not evaluated** for the match. No live analysis or payment action was triggered.
+
+### Automated verification
+
+Five added mocked frontend regressions cover edits to normal, empty, and over-length text, plus stale success and failure responses arriving after an edit without reanalysis. They verify visible analysis/review invalidation, confirmation reset, disabled actions, and absence of extra requests. All five failed against the previous wording and passed after the fix.
+
+Full suite: `npm test` — **106 tests passed, 0 failed**. Local HTTP tests used loopback listeners and mocked external providers. `git diff --check` passed.
+
+Backend review validation and all existing PayPal safeguards were unchanged. No live AI requests or PayPal operations were performed during this validation. Local `.env` and transaction recovery records were preserved and remain excluded from Git. This record contains no customer request logs, raw model output, credentials, or local transaction identifiers.

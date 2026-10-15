@@ -204,7 +204,9 @@ function updateAnalysisControls(showStatus = true) {
   button.disabled = !!reason;
   button.title = reason;
   document.getElementById('customer-request').disabled = merchantBusy;
-  if (showStatus) document.getElementById('analysis-status').textContent = reason || 'AI analysis ready. Customer claims remain unverified.';
+  if (showStatus) document.getElementById('analysis-status').textContent = requestReview
+    ? reason || 'AI analysis complete. Unverified customer claims; merchant review required.'
+    : `No current analysis. ${reason || 'Click Analyze request to analyze the current text.'}`;
 }
 document.getElementById('customer-request').addEventListener('input', () => { invalidateRequestReview(); updateAnalysisControls(); });
 let analysisGeneration = 0;
@@ -213,7 +215,9 @@ function invalidateRequestReview() {
   analysisGeneration++;
   requestReview = undefined;
   analysisBusy = false;
+  const empty = document.createElement('p'); empty.textContent = 'No current analysis.';
   document.getElementById('request-analysis').replaceChildren();
+  document.getElementById('request-analysis').append(empty);
   document.getElementById('confirm-cancellation').checked = false;
   document.getElementById('confirm-void').checked = false;
   renderRequestReview();
@@ -298,5 +302,5 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
     if (generation === analysisGeneration) status.textContent = error.message;
   } finally { if (generation === analysisGeneration) { analysisBusy = false; updateAnalysisControls(false); } }
 });
-renderRequestReview();
+invalidateRequestReview();
 loadAnalysisConfig();
