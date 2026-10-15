@@ -1,4 +1,43 @@
-# Payment Authorization Review Assistant
+# PayPal Cancellation Assistant
+
+AI-assisted merchant review for customer cancellation requests and uncaptured PayPal authorizations. The app extracts evidence from customer text, matches literal order references on the backend, and requires explicit merchant approval before a guarded Sandbox void.
+
+## Quick start
+
+Prerequisites: Node.js 20.12.2 or newer and npm.
+
+```sh
+git clone https://github.com/ZhihaoXu18/paypal-cancellation-assistant.git
+cd paypal-cancellation-assistant
+npm ci
+npm test
+npm run dev
+```
+
+Open <http://127.0.0.1:3000>. Only run one server at a time. Stop it with Ctrl+C.
+Without credentials, the labelled mock panel and health endpoint work; AI analysis shows **AI not configured** and Sandbox checkout is unavailable.
+
+For live development integrations, create a root `.env` if you do not already have one. Copy the variable names from [`.env.example`](.env.example), fill them locally, and preserve existing configuration. Never commit or share actual keys.
+
+- `PAYPAL_SANDBOX_CLIENT_ID` and `PAYPAL_SANDBOX_CLIENT_SECRET`: your PayPal Developer Sandbox app.
+- `OPENAI_API_KEY` and `OPENAI_MODEL`: your OpenAI API project and a model supporting Responses API Structured Outputs.
+- Restart the server after changing configuration. Clicking **Analyze request** sends a potentially billable AI request.
+- Use Sandbox Personal buyer credentials for checkout, never a live account.
+- `npm start` starts without watch mode. `npm run paypal:check` checks Sandbox OAuth only.
+
+## What is implemented
+
+- Actual PayPal Sandbox order creation, authorization, read-only lookup, and merchant-confirmed void with independent status verification.
+- AI intent/reference extraction with strict schema and literal-source evidence checks.
+- Backend request-to-order matching and a separate merchant review panel.
+- Session-bound, expiring review gates; stale-response handling; duplicate/concurrent void protection and reconciliation.
+
+Fulfillment and local cancellation are **simulated**. This is a single-process local demo, without a production identity system or ecommerce connector. Matching an order number does not authenticate a customer. Capture and refund are not implemented. Voiding does not guarantee immediate bank funds availability.
+
+See [acceptance criteria and test evidence](docs/VALIDATION.md) for automated coverage and the remaining manual review.
+The project source is licensed under [ISC](LICENSE), consistent with the existing package metadata. Dependencies retain their own licenses.
+
+## Detailed setup and workflow
 
 Help merchants identify cancelled orders whose PayPal authorizations remain active, for merchant review. This scaffold displays one clearly labelled **Mock data** order: CAD 100, **Order cancelled**, **Not shipped**, and **Payment authorized — not captured**.
 
@@ -163,7 +202,7 @@ When the actual authorization status is VOIDED, the UI shows “Authorization al
 
 ## AI-assisted customer request analysis
 
-No existing AI vendor integration was found in the source or dependencies. The implementation now uses a direct **OpenAI Responses API adapter** with strict JSON Schema Structured Outputs. Mocked providers are used only in tests. No paid live AI request has been run or verified. Missing configuration displays **AI not configured**; the application never substitutes mock analysis in the UI.
+The implementation uses a direct **OpenAI Responses API adapter** with strict JSON Schema Structured Outputs. Mocked providers are used only in tests. Live AI smoke-test results were reported during development; automated tests use mocked providers. See docs/VALIDATION.md for the verification boundary. Missing configuration displays **AI not configured**; the application never substitutes mock analysis in the UI.
 
 Use **Customer request** and **Analyze request** without requiring checkout or payment authorization. An optional selected order is context for review only, not automatically bound to the request. Switching orders clears the result; a stale in-flight result cannot be displayed for the new selection. The separate panel is labelled **AI analysis — Unverified customer claims**, independently of verified payment facts and simulated fulfillment.
 
@@ -212,7 +251,7 @@ Missing, relative, multiple (including corrections), and mismatched references b
 
 Editing customer text or changing selected orders clears the review and both confirmations; stale analysis responses are ignored. Starting another analysis invalidates the previous server review, and out-of-order completions cannot restore it. Cancellation and void endpoints require a server-issued review bound to the browser session, selected order, and SHA-256 digest of the unchanged message, plus explicit confirmation. Reviews expire after 15 minutes and are lost on restart; analyze again when necessary. Review metadata is kept only in memory, without storing or logging customer text or raw model output. The message sent back for review validation is not submitted to OpenAI again.
 
-Analysis remains read-only. The review gate is an additional requirement on the existing merchant mutation routes; ownership, shipment state, local cancellation, amount/currency, authorization relationship, capture absence, duplicate guards, persistence, and reconciliation checks remain in place. Tests use mocked AI and payment providers, including local HTTP route tests; no live AI or PayPal verification is claimed.
+Analysis remains read-only. The review gate is an additional requirement on the existing merchant mutation routes; ownership, shipment state, local cancellation, amount/currency, authorization relationship, capture absence, duplicate guards, persistence, and reconciliation checks remain in place. Tests use mocked AI and payment providers, including local HTTP route tests; this automated suite does not establish live AI or PayPal verification.
 
 Official documentation checked for the OpenAI adapter implementation:
 
