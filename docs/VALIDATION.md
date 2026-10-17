@@ -1,5 +1,14 @@
 # Request-to-order review: acceptance and verification
 
+## Maintenance verification — 2026-10-16
+
+- Full mocked suite: `npm test` — **107 passed, 0 failed**.
+- `npm audit --omit=dev` reported **0 known vulnerabilities**; no dependency versions were changed.
+- Fixed an empty-body edge case: when a valid review exists, cancellation/void requests without a JSON body now receive the safe HTTP 409 review rejection instead of a generic HTTP 500. Neither case permits execution without confirmation.
+- Added regression assertions for both empty-body mutation routes and a test proving expired reviews and reviews from a previous app instance cannot reach payment methods. This supplements the earlier expiry/restart source inspection below.
+- Existing matching, explicit merchant confirmation, source validation, and PayPal checks remain intact. No live AI requests or PayPal operations were performed.
+- Local configuration and transaction records remain ignored and are excluded from this maintenance commit.
+
 ## Automated verification
 
 Source commit inspected: b1bac4901adde8f92b4fc1606dbdbd6f6eca09d4

@@ -12,9 +12,10 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
   const digest = message => createHash('sha256').update(message).digest('hex');
   function requireCancellationReview(req) {
     const review = reviews.get(req.sandboxSession);
-    if (!review?.review?.canReviewCancellation || review.id !== req.body.reviewId ||
+    const confirmation = req.body || {};
+    if (!review?.review?.canReviewCancellation || review.id !== confirmation.reviewId ||
       review.selectedOrderId !== req.params.id || review.expiresAt <= Date.now() ||
-      typeof req.body.message !== 'string' || digest(req.body.message) !== review.messageDigest || req.body.confirmed !== true) {
+      typeof confirmation.message !== 'string' || digest(confirmation.message) !== review.messageDigest || confirmation.confirmed !== true) {
       throw new SafeError('A current matching cancellation review and explicit merchant confirmation are required. Resolve references and analyze again.', 409);
     }
     return review;

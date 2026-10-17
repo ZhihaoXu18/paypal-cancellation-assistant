@@ -51,6 +51,11 @@ test('HTTP cancellation and void reject missing, changed, forged, cross-session 
     const message = 'Cancel ORDER-1.';
     const { review } = await analyze(message);
     const body = { message, reviewId: review.reviewId, confirmed: true, orderId: 'ORDER-1', authorizationId: 'AUTH-1' };
+    for (const operation of ['cancel', 'void']) {
+      const empty = await fetch(base + url + '/' + operation, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie } });
+      assert.equal(empty.status, 409);
+      assert.match((await empty.json()).error, /current matching cancellation review/);
+    }
     for (const altered of [{ ...body, message: 'Cancel ORDER-1 now.' }, { ...body, confirmed: false }, { ...body, reviewId: 'fabricated' }]) {
       assert.equal((await post(url + '/cancel', altered)).status, 409);
     }
@@ -65,6 +70,40 @@ test('HTTP cancellation and void reject missing, changed, forged, cross-session 
     assert.equal((await post(url + '/void', body)).status, 409);
     assert.equal(calls.length, 2);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('Expired reviews and reviews from a previous app instance cannot reach payment methods', async t => {
+  let paymentCalls = 0;
+  const forbidden = () => { paymentCalls++; throw new Error('Payment method must not run'); };
+  const paypal = { cancel: forbidden, void: forbidden };
+  const first = createApp(paypal, analyzer()).listen(0, '127.0.0.1');
+  const restarted = createApp(paypal, analyzer()).listen(0, '127.0.0.1');
+  try {
+    await Promise.all([once(first, 'listening'), once(restarted, 'listening')]);
+    const base = server => `http://127.0.0.1:${server.address().port}`;
+    const config = await fetch(base(first) + '/api/analysis/config');
+    const cookie = config.headers.get('set-cookie').split(';')[0];
+    const message = 'Cancel ORDER-1.';
+    const post = (server, path, body) => fetch(base(server) + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body) });
+    const result = await post(first, '/api/analysis', { message, selectedOrderId: 'ORDER-1' });
+    const { review } = await result.json();
+    const body = { message, reviewId: review.reviewId, confirmed: true, orderId: 'ORDER-1', authorizationId: 'AUTH-1' };
+    for (const operation of ['cancel', 'void']) {
+      assert.equal((await post(restarted, `/api/paypal/orders/ORDER-1/${operation}`, body)).status, 409);
+    }
+    const future = Date.now() + 16 * 60 * 1000;
+    t.mock.method(Date, 'now', () => future);
+    for (const operation of ['cancel', 'void']) {
+      assert.equal((await post(first, `/api/paypal/orders/ORDER-1/${operation}`, body)).status, 409);
+    }
+    assert.equal(paymentCalls, 0);
+  } finally {
+    t.mock.restoreAll();
+    for (const server of [first, restarted]) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  }
 });
 
 test('Out-of-order analysis completion cannot restore an older server review', async () => {
