@@ -12,7 +12,6 @@ async function checkHealth() {
 
 checkHealth();
 
-let sandboxOrderId;
 let currentSandbox;
 let merchantBusy = false;
 let requestReview;
@@ -39,13 +38,12 @@ async function sandboxRequest(url, method = 'GET', body = {}) {
   return data;
 }
 function displaySandbox(data) {
-  sandboxOrderId = data.orderId;
-  if (currentSandbox?.orderId !== data.orderId) document.getElementById('confirm-void').checked = false;
+  const orderChanged = currentSandbox?.orderId !== data.orderId;
   currentSandbox = data;
-  updateAnalysisSelection(data.orderId);
-  updateMerchantControls();
-  renderRequestReview();
-  refreshButton.disabled = merchantBusy;
+  if (orderChanged) invalidateRequestReview();
+  else { updateMerchantControls(); renderRequestReview(); }
+  document.getElementById('analysis-order').textContent = `Selected order: ${data.orderId}. This association does not establish which order the customer means.`;
+  updateAnalysisControls();
   const details = document.getElementById('sandbox-details');
   details.replaceChildren();
   for (const [label, value] of [
@@ -64,15 +62,15 @@ function displaySandbox(data) {
   }
 }
 refreshButton.addEventListener('click', async () => {
-  if (merchantBusy) return;
+  if (merchantBusy || !currentSandbox) return;
   refreshButton.disabled = true;
   sandboxStatus.textContent = 'Retrieving actual Sandbox status…';
   try {
-    const data = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(sandboxOrderId)}`);
+    const data = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(currentSandbox.orderId)}`);
     displaySandbox(data);
     sandboxStatus.textContent = 'Actual status retrieved from PayPal Sandbox. No payment was captured by this application.';
   } catch (error) { sandboxStatus.textContent = error.message; }
-  finally { refreshButton.disabled = !sandboxOrderId; }
+  finally { refreshButton.disabled = merchantBusy || !currentSandbox; }
 });
 async function loadSandboxCheckout() {
   try {
@@ -210,7 +208,6 @@ function updateAnalysisControls(showStatus = true) {
 }
 document.getElementById('customer-request').addEventListener('input', () => { invalidateRequestReview(); updateAnalysisControls(); });
 let analysisGeneration = 0;
-let analysisOrderId;
 function invalidateRequestReview() {
   analysisGeneration++;
   requestReview = undefined;
@@ -237,25 +234,20 @@ function renderRequestReview() {
     multiple_references: 'Multiple references, including corrections, require manual resolution. No order was selected automatically.',
     no_selected_order: 'Select and load an order manually, then analyze again.',
   };
-  for (const [label, values] of [
+  appendListSections(panel, [
     ['Unverified customer intent and claims', analysis ? [analysis.intent, analysis.reason?.text || 'No stated reason', ...analysis.orderReferences.map(item => `${item.reference} — quote: ${item.quote}`)] : ['No current analysis. Analyze the current customer text.']],
     ['Order-reference match result (backend)', [statusText[match?.status] || 'Not evaluated.', 'A match is not customer authentication or approval to cancel.', match?.canReviewCancellation ? 'Eligible for manual merchant cancellation review only.' : 'Cancellation review blocked. Refunds and status questions cannot execute cancellation.']],
     ['Verified PayPal facts (last retrieved snapshot)', data ? [`Order: ${data.orderId}`, `Order status: ${data.orderStatus || 'Not retrieved'}`, `Authorization: ${data.authorizationId || 'Not retrieved'}`, `Authorization status: ${data.authorizationStatus || 'Not retrieved'}`, `Amount: ${data.currency || 'Unknown'} ${data.amount || 'Unknown'}`, `Capture count: ${data.paymentFacts?.captureCount ?? 'Not verified'}`, `Verified at: ${data.paymentFacts?.verifiedAt || 'No void-eligibility verification yet'}`] : ['No selected order facts. Load an order using read-only lookup.']],
     ['Simulated local cancellation and shipment facts', data ? [`Cancellation: ${data.localOrderStatus || 'Unknown'}`, `Shipment: ${data.shipmentStatus || 'Unknown'}`] : ['No local order selected.']],
-  ]) {
+  ]);
+}
+function appendListSections(panel, sections) {
+  for (const [label, values] of sections) {
     const title = document.createElement('h4'); title.textContent = label; panel.append(title);
     const list = document.createElement('ul');
-    for (const value of values) { const item = document.createElement('li'); item.textContent = value; list.append(item); }
+    for (const value of values.length ? values : ['None reported']) { const item = document.createElement('li'); item.textContent = value; list.append(item); }
     panel.append(list);
   }
-}
-function updateAnalysisSelection(id) {
-  if (analysisOrderId !== id) {
-    invalidateRequestReview();
-  }
-  analysisOrderId = id;
-  document.getElementById('analysis-order').textContent = `Selected order: ${id}. This association does not establish which order the customer means.`;
-  updateAnalysisControls();
 }
 async function loadAnalysisConfig() {
   try {
@@ -284,19 +276,13 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
     requestReview = { selectedOrderId, message, analysis, review: result.review || { canReviewCancellation: false } };
     renderRequestReview();
     updateMerchantControls();
-    const box = document.getElementById('request-analysis');
-    for (const [label, values] of [
+    appendListSections(document.getElementById('request-analysis'), [
       ['Intent (unverified)', [analysis.intent]],
       ['Explicit order references', analysis.orderReferences.map(item => `${item.reference} — quote: ${item.quote}`)],
       ['Stated reason (unverified)', [analysis.reason?.text || 'Not stated']],
       ['Supporting quotes', analysis.supportingQuotes], ['Review flags', analysis.reviewFlags],
       ['Missing information', analysis.missingInformation], ['Clarification questions', analysis.clarificationQuestions],
-    ]) {
-      const title = document.createElement('h4'); title.textContent = label; box.append(title);
-      const list = document.createElement('ul');
-      for (const value of values.length ? values : ['None reported']) { const item = document.createElement('li'); item.textContent = value; list.append(item); }
-      box.append(list);
-    }
+    ]);
     status.textContent = 'AI analysis complete. Unverified customer claims; merchant review required. No order or payment state changed.';
   } catch (error) {
     if (generation === analysisGeneration) status.textContent = error.message;

@@ -2,7 +2,7 @@
 
 ## Latest checks
 
-- 2026-10-19: **107/107 tests passed** using mocked AI/PayPal responses and local HTTP servers. `npm audit --omit=dev`: **0 known vulnerabilities**. No dependency changes were needed.
+- 2026-10-19: **110/110 tests passed** after consolidating frontend state/rendering and removing the legacy CLI authorization path. All external calls were mocked. Dependency audit earlier that day: **0 known vulnerabilities**; dependencies unchanged.
 - Coverage includes exact order matching, conflicting/missing references, source evidence, expired/session-bound reviews, stale responses, merchant confirmation, and payment eligibility/duplicate guards.
 - Browser check: editing customer text clears analysis, matching, and confirmations. Independent order facts stay visible. After the wording fix, the status explicitly shows **No current analysis**.
 - Sandbox checkout: one existing APPROVED order was authorized once after verifying no authorization/capture existed and the running backend's attempt guard was false. Independent GET requests confirmed authorization **CREATED**, CAD 100.00, and no captures. This does not establish full end-to-end matching/cancellation acceptance.

@@ -171,6 +171,20 @@ function selectReviewOrder(ui, id = 'ORDER-1') {
 function visibleText(node) {
   return [node.textContent, ...(node.children || []).map(visibleText)].join(' ');
 }
+test('Refreshing the same selected order preserves review while updating its independent facts', async () => {
+  const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body) });
+  await new Promise(resolve => setImmediate(resolve));
+  selectReviewOrder(ui);
+  ui.nodes.get('customer-request').value = 'Cancel ORDER-1.';
+  await ui.nodes.get('analyze-request').handlers.click();
+  const review = vm.runInContext('requestReview', ui.context);
+  ui.nodes.get('confirm-cancellation').checked = true;
+  vm.runInContext("displaySandbox({...currentSandbox, localOrderStatus:'CANCELLED'})", ui.context);
+  assert.equal(vm.runInContext('requestReview', ui.context), review);
+  assert.equal(ui.nodes.get('confirm-cancellation').checked, true);
+  assert.match(visibleText(ui.nodes.get('request-review')), /Cancellation: CANCELLED/);
+  assert.match(visibleText(ui.nodes.get('request-review')), /One literal reference matches/);
+});
 for (const edited of ['Refund ORDER-1.', '', 'x'.repeat(4001)]) {
   test(`Every customer edit immediately clears displayed analysis and confirmations (${edited.length} characters)`, async () => {
     const ui = analysisUI({ analyzeResponse: async body => matchingResponse(body) });
