@@ -30,7 +30,7 @@ test('Checkout SDK uses CAD authorize, cancellation sends no authorization, and 
   await callbacks.createOrder();
   callbacks.onCancel();
   assert.equal(authorizeCalls, 0);
-  assert.match(nodes.get('sandbox-status').textContent, /Buyer cancelled/);
+  assert.match(nodes.get('sandbox-status').textContent, /Checkout cancellation callback received/);
   await Promise.all([callbacks.onApprove({ orderID: 'ORDER-1' }), callbacks.onApprove({ orderID: 'ORDER-1' })]);
   await callbacks.onApprove({ orderID: 'ORDER-1' });
   assert.equal(authorizeCalls, 1);

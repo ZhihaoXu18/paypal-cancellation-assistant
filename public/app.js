@@ -22,6 +22,15 @@ function currentCancellationReview() {
 const sandboxStatus = document.getElementById('sandbox-status');
 const refreshButton = document.getElementById('refresh-sandbox');
 const approvals = new Map();
+function checkoutDiagnostic(event, orderId, details = {}) {
+  const record = { time: new Date().toISOString(), event };
+  // Only retain IDs belonging to the displayed order; never spread SDK data/errors.
+  if (typeof orderId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(orderId) && orderId === currentSandbox?.orderId) record.orderId = orderId;
+  if (typeof details.deduplicationHit === 'boolean') record.deduplicationHit = details.deduplicationHit;
+  if (Number.isInteger(details.httpStatus) && details.httpStatus >= 100 && details.httpStatus <= 599) record.httpStatus = details.httpStatus;
+  if (['HTTP_ERROR', 'NETWORK_ERROR', 'REQUEST_TIMEOUT', 'RESPONSE_UNREADABLE', 'INVALID_ORDER_ID', 'SDK_ERROR', 'UNKNOWN_ERROR'].includes(details.errorCategory)) record.errorCategory = details.errorCategory;
+  try { console.info(record); } catch { /* Diagnostics must not affect checkout. */ }
+}
 document.getElementById('lookup-sandbox').addEventListener('click', async () => {
   if (merchantBusy) return;
   const id = document.getElementById('existing-order-id').value.trim();
@@ -31,8 +40,9 @@ document.getElementById('lookup-sandbox').addEventListener('click', async () => 
     sandboxStatus.textContent = 'Actual Sandbox status retrieved using read-only requests. No authorization was submitted.';
   } catch (error) { sandboxStatus.textContent = error.message; }
 });
-async function sandboxRequest(url, method = 'GET', body = {}) {
+async function sandboxRequest(url, method = 'GET', body = {}, onResponse) {
   const response = await fetch(url, { method, ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+  if (onResponse) onResponse(response.status);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Sandbox request failed.');
   return data;
@@ -92,26 +102,49 @@ async function loadSandboxCheckout() {
         return data.orderId;
       },
       onApprove: (data) => {
-        if (approvals.has(data.orderID)) return approvals.get(data.orderID);
+        const orderId = data?.orderID;
+        checkoutDiagnostic('onApprove_enter', orderId);
+        const deduplicationHit = approvals.has(orderId);
+        checkoutDiagnostic('approval_deduplication', orderId, { deduplicationHit });
+        if (deduplicationHit) return approvals.get(orderId);
+        if (typeof orderId !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(orderId)) {
+          checkoutDiagnostic('authorization_request_failed', undefined, { errorCategory: 'INVALID_ORDER_ID' });
+          sandboxStatus.textContent = 'Checkout approval callback has no valid order ID. Refresh actual status; no authorization was submitted by this callback.';
+          return;
+        }
         const pending = (async () => {
+          let httpStatus;
+          let requestSucceeded = false;
           sandboxStatus.textContent = 'Buyer approved. Authorizing on the server; no capture will be performed…';
           try {
-            const result = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(data.orderID)}/authorize`, 'POST');
+            checkoutDiagnostic('authorization_post_sending', orderId);
+            const result = await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(orderId)}/authorize`, 'POST', {}, status => { httpStatus = status; });
+            requestSucceeded = true;
+            checkoutDiagnostic('authorization_request_succeeded', orderId, { httpStatus });
             displaySandbox(result);
             sandboxStatus.textContent = result.authorizationStatus === 'CREATED'
               ? 'Payment authorized — not captured. Actual authorization status: CREATED.'
               : 'Actual authorization status retrieved from PayPal Sandbox. No capture was requested by this application.';
           } catch (error) {
+            if (!requestSucceeded) {
+              const errorCategory = httpStatus >= 400 ? 'HTTP_ERROR'
+                : error?.name === 'AbortError' || error?.name === 'TimeoutError' ? 'REQUEST_TIMEOUT'
+                : error?.name === 'SyntaxError' ? 'RESPONSE_UNREADABLE'
+                : error?.name === 'TypeError' ? 'NETWORK_ERROR' : 'UNKNOWN_ERROR';
+              checkoutDiagnostic('authorization_request_failed', orderId, { httpStatus, errorCategory });
+            }
             sandboxStatus.textContent = `${error.message} Authorization will not be retried automatically. Use Refresh actual authorization status to reconcile.`;
           }
         })();
-        approvals.set(data.orderID, pending);
+        approvals.set(orderId, pending);
         return pending;
       },
-      onCancel: () => {
-        sandboxStatus.textContent = 'Buyer cancelled checkout. No authorization request was sent for this cancelled checkout. The merchant order was not marked cancelled.';
+      onCancel: (data) => {
+        checkoutDiagnostic('onCancel_enter', data?.orderID || currentSandbox?.orderId);
+        sandboxStatus.textContent = 'Checkout cancellation callback received. Use Refresh actual authorization status (read-only) to confirm the actual order and authorization state.';
       },
       onError: () => {
+        checkoutDiagnostic('onError_enter', currentSandbox?.orderId, { errorCategory: 'SDK_ERROR' });
         sandboxStatus.textContent = 'Sandbox checkout failed. If approval was already submitted, refresh actual status before taking further action. No automatic authorization retry.';
       },
     }).render('#paypal-buttons');
