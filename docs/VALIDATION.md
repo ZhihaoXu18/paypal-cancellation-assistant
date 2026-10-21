@@ -60,7 +60,7 @@ Verified from the supplied run output: existing authorization lookup → AI requ
 
 Local cancellation and shipment are simulated, not real warehouse evidence. Reference matching is not customer authentication. No production customer identity system or real fulfillment integration was tested. Bank funds availability was not verified. The original approval callback failure remains unresolved; this run does not establish its cause or fix.
 
-## Reproduction checklist — fresh checkout run pending
+## Reproduction checklist — fresh checkout
 
 Use the setup instructions in README, configured Sandbox merchant credentials, a Sandbox Personal buyer account, and the configured AI provider. Never place secrets or raw authenticated network exports in this document.
 
@@ -77,9 +77,69 @@ Use the setup instructions in README, configured Sandbox merchant credentials, a
 
 If checkout stalls, preserve the new Order ID and report the last observed boundary: buyer approval, frontend callback status, browser authorization request, backend reception/validation, or upstream call/result. A later successful run alone does not explain the earlier failure.
 
+## Fresh-order Sandbox E2E run — 2026-10-20 America/Toronto
+
+**Result: the fresh-order happy path passed in the operator's local environment**, based on application output, sanitized browser diagnostics, and action history supplied during the guided run. The documentation editor did not independently call PayPal. Exact local revision and initial order-creation timestamp were not supplied.
+
+### Diagnostics and preceding unsuccessful attempt
+
+Earlier order `3PA11474RK403143L` showed a cancellation callback message after the popup closed automatically, while a read-only refresh returned APPROVED without an authorization ID. The operator reported no `authorize` request in the preserved browser Network record. Callback root cause remains unknown.
+
+The operator then reported local diagnostic changes: callback-entry events, deduplication outcomes, authorization-request events, and safe cancellation wording that requests read-only reconciliation instead of asserting buyer cancellation or absence of authorization. Six regression tests were added; **116/116 tests passed**, with syntax and patch checks passing (operator report, not rerun by the documentation editor). The three changed files were `public/app.js`, `test/checkout-diagnostics.test.js`, and `test/checkout-ui.test.js`; the operator reported no commit or push. A later successful run does not prove the diagnostic changes fixed the earlier fault.
+
+### New order and authorization evidence
+
+- Order ID: `6G61143682239935K`
+- Authorization ID: `54G35585498219717`
+- Amount: CAD 100.00
+- New checkout was followed by automatic authorization through the frontend callback; no manual supplemental authorization was used in this run.
+
+| UTC timestamp | Browser event | Result |
+| --- | --- | --- |
+| 2026-10-21T02:19:21.475Z | onApprove_enter | Order 6G61143682239935K |
+| 2026-10-21T02:19:21.476Z | approval_deduplication | deduplicationHit: false |
+| 2026-10-21T02:19:21.476Z | authorization_post_sending | Order 6G61143682239935K |
+| 2026-10-21T02:19:24.898Z | authorization_request_succeeded | HTTP 200 |
+
+A subsequent read-only refresh showed order COMPLETED, authorization CREATED, CAD 100.00, capture count 0, local ACTIVE, simulated NOT_SHIPPED, and void not attempted. The payment snapshot displayed during review was `2026-10-21T02:20:04.022Z`. HTTP 200 alone was not used as authorization evidence.
+
+### AI review and merchant execution
+
+Test message: "Please cancel order 6G61143682239935K because I placed it by mistake."
+
+AI returned cancellation_request, the exact reference with quote "order 6G61143682239935K", and the stated reason. No review flags, missing information, or clarification questions were reported. Backend matching confirmed one literal reference matched the selected order and allowed manual cancellation review only.
+
+| UTC timestamp | Action | Result |
+| --- | --- | --- |
+| 2026-10-21T02:24:35.229Z | MERCHANT_CANCEL_SIMULATED_ORDER | CANCELLED |
+| 2026-10-21T02:25:17.565Z | MERCHANT_CONFIRMED_VOID | REQUEST_PREPARED |
+| 2026-10-21T02:25:20.198Z | VOID_RESULT | VOIDED_CONFIRMED_BY_GET |
+
+A further operator-triggered read-only refresh confirmed:
+
+| Field | Final value |
+| --- | --- |
+| PayPal order | 6G61143682239935K |
+| PayPal order status | COMPLETED |
+| Authorization | 54G35585498219717 |
+| Authorization status | **VOIDED** |
+| Amount | CAD 100.00 |
+| Capture count (last verified) | **0** |
+| Void execution state | **CONFIRMED** |
+| Local order state (simulated) | Order cancelled |
+| Shipment state (simulated) | Not shipped |
+
+Final refresh timestamp was not supplied. All listed UTC events occurred on October 20 in America/Toronto.
+
+### Acceptance boundaries
+
+This run covers fresh checkout → buyer approval callback → automatic authorization request → read-only authorization confirmation → AI analysis → backend matching → merchant-approved simulated cancellation → merchant-approved Sandbox void → independent GET confirmation → final read-only refresh.
+
+It establishes one successful local Sandbox happy path, not general checkout reliability or resolution of the preceding callback fault. Local cancellation and fulfillment remain simulated. Customer authority was a test-operator assertion, not a production authentication integration. No capture, refund, real warehouse cancellation, or bank-funds release timing was validated.
+
 ## Still to verify
 
-- A fresh order → buyer approval → automatic frontend authorization request → authorization creation → AI review → cancellation → void run, with evidence at each boundary.
+- Commit and preserve the locally tested checkout diagnostics code, then record the exact running revision for reproducibility. The operator reported these changes were uncommitted; this documentation commit does not include them.
 - Root cause of the earlier incomplete approval callback.
 - Real fulfillment integration and customer authentication; current fulfillment remains simulated.
 
