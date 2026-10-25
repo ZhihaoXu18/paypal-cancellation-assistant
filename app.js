@@ -39,12 +39,15 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
   app.get('/api/analysis/config', (req, res) => {
     res.set('Cache-Control', 'no-store').json({ configured: analyzer.configured === true });
   });
-  app.post('/api/analysis', (req, res, next) => {
+  function validateApiRequest(req, res, next) {
     res.set('Cache-Control', 'no-store');
-    if (req.get('origin') && req.get('origin') !== 'http://127.0.0.1:3000') return res.status(403).json({ error: 'Request origin is not allowed.' });
-    if (!req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
+    const origin = req.get('origin');
+    if (origin && origin !== 'http://127.0.0.1:3000') return res.status(403).json({ error: 'Request origin is not allowed.' });
+    if (req.method === 'POST' && !req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
     next();
-  }, express.json({ limit: '24kb' }), async (req, res) => {
+  }
+  const reviewJson = express.json({ limit: '24kb' });
+  app.post('/api/analysis', validateApiRequest, reviewJson, async (req, res) => {
     const pending = { id: randomUUID() };
     reviews.set(req.sandboxSession, pending);
     try {
@@ -58,13 +61,7 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
     }
     catch (error) { res.status(error instanceof AnalysisError ? error.status : 500).json({ error: error instanceof AnalysisError ? error.message : 'AI analysis failed. No action was taken.' }); }
   });
-  app.use('/api/paypal', (req, res, next) => {
-    res.set('Cache-Control', 'no-store');
-    const origin = req.get('origin');
-    if (origin && origin !== 'http://127.0.0.1:3000') return res.status(403).json({ error: 'Request origin is not allowed.' });
-    if (req.method === 'POST' && !req.is('application/json')) return res.status(415).json({ error: 'JSON requests are required.' });
-    next();
-  });
+  app.use('/api/paypal', validateApiRequest);
   const route = (handler) => async (req, res) => {
     try {
       if (req.method === 'POST' && req.path.endsWith('/authorize')) console.log(`Sandbox authorization callback received for order ${req.params.id}.`);
@@ -76,7 +73,6 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
     }
   };
   const paymentJson = express.json({ limit: '2kb' });
-  const reviewJson = express.json({ limit: '24kb' });
   app.use('/api/paypal', (req, res, next) => {
     const parser = /\/orders\/[^/]+\/(?:cancel|void)$/.test(req.path) ? reviewJson : paymentJson;
     parser(req, res, next);

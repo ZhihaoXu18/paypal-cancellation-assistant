@@ -182,6 +182,11 @@ function updateMerchantControls() {
     const item = document.createElement('li'); item.textContent = `${event.time}: ${event.action} — ${event.result}`; history.append(item);
   }
 }
+function clearMerchantConfirmations() {
+  for (const id of ['confirm-cancellation', 'confirm-void']) {
+    document.getElementById(id).checked = false;
+  }
+}
 document.getElementById('confirm-void').addEventListener('change', updateMerchantControls);
 document.getElementById('confirm-cancellation').addEventListener('change', updateMerchantControls);
 document.getElementById('cancel-local-order').addEventListener('click', async () => {
@@ -191,8 +196,7 @@ document.getElementById('cancel-local-order').addEventListener('click', async ()
   merchantBusy = true; updateMerchantControls();
   try {
     displaySandbox(await sandboxRequest(`/api/paypal/orders/${encodeURIComponent(id)}/cancel`, 'POST', { reviewId: review.review.reviewId, message: review.message, confirmed: true }));
-    document.getElementById('confirm-cancellation').checked = false;
-    document.getElementById('confirm-void').checked = false;
+    clearMerchantConfirmations();
     sandboxStatus.textContent = 'Local order marked cancelled (simulated). PayPal order status was not changed. No void was executed.';
   } catch (error) { sandboxStatus.textContent = error.message; }
   finally { merchantBusy = false; updateMerchantControls(); }
@@ -248,8 +252,7 @@ function invalidateRequestReview() {
   const empty = document.createElement('p'); empty.textContent = 'No current analysis.';
   document.getElementById('request-analysis').replaceChildren();
   document.getElementById('request-analysis').append(empty);
-  document.getElementById('confirm-cancellation').checked = false;
-  document.getElementById('confirm-void').checked = false;
+  clearMerchantConfirmations();
   renderRequestReview();
   updateMerchantControls();
 }
@@ -284,9 +287,8 @@ function appendListSections(panel, sections) {
 }
 async function loadAnalysisConfig() {
   try {
-    const response = await fetch('/api/analysis/config');
-    if (!response.ok) throw new Error('Configuration unavailable');
-    const config = await response.json(); aiConfigured = config.configured === true;
+    const config = await sandboxRequest('/api/analysis/config');
+    aiConfigured = config.configured === true;
     analysisConfigState = 'ready';
   } catch { aiConfigured = false; analysisConfigState = 'failed'; }
   updateAnalysisControls();
