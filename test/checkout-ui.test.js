@@ -91,7 +91,7 @@ test('Customer analysis uses only its analysis endpoint and never triggers a Pay
     paypal: { FUNDING: { PAYPAL: 'paypal' }, Buttons() { return { render: async () => {} }; } },
     fetch: async (url, options = {}) => {
       calls.push({ url, options });
-      const data = url === '/api/analysis/config' ? { configured: true } : url === '/api/paypal/config' ? { clientId: 'mock-client' } : url === '/api/analysis' ? { analysis: { intent: 'unclear', orderReferences: [], reason: null, supportingQuotes: ['Cancel the second order.'], reviewFlags: ['missing_order_reference', 'ambiguous_order_reference'], missingInformation: ['Order ID'], clarificationQuestions: ['Which exact order ID?'] } } : { status: 'ok' };
+      const data = url === '/api/analysis/config' ? { configured: true } : url === '/api/paypal/config' ? { clientId: 'mock-client' } : url === '/api/analysis' ? { analysis: { intent: 'unclear', orderReferences: [], reason: null, cancellationConditions: [], unmetConditionRequirements: [], supportingQuotes: ['Cancel the second order.'], reviewFlags: ['missing_order_reference', 'ambiguous_order_reference'], missingInformation: ['Order ID'], clarificationQuestions: ['Which exact order ID?'] } } : { status: 'ok' };
       return { ok: true, json: async () => data };
     },
   });
@@ -122,7 +122,7 @@ function analysisUI({ configured = true, configFails = false, analysisFails = fa
       if (url === '/api/analysis/config' && configFails) throw new Error('offline');
       if (url === '/api/analysis' && analyzeResponse) return analyzeResponse(JSON.parse(options.body));
       const failed = url === '/api/analysis' && analysisFails;
-      const data = url === '/api/analysis/config' ? { configured } : url === '/api/paypal/config' ? { clientId: 'mock-client' } : failed ? { error: 'AI unavailable. No action was taken.' } : url === '/api/analysis' ? { analysis: { intent: 'unclear', orderReferences: [], reason: null, supportingQuotes: ['Cancel my order.'], reviewFlags: [], missingInformation: [], clarificationQuestions: [] } } : { status: 'ok' };
+      const data = url === '/api/analysis/config' ? { configured } : url === '/api/paypal/config' ? { clientId: 'mock-client' } : failed ? { error: 'AI unavailable. No action was taken.' } : url === '/api/analysis' ? { analysis: { intent: 'unclear', orderReferences: [], reason: null, cancellationConditions: [], unmetConditionRequirements: [], supportingQuotes: ['Cancel my order.'], reviewFlags: [], missingInformation: [], clarificationQuestions: [] } } : { status: 'ok' };
       return { ok: !failed, json: async () => data };
     },
   });
@@ -160,7 +160,7 @@ test('Analysis accepts valid text without checkout and after CREATED checkout fa
 
 function matchingResponse(body, intent = 'cancellation_request') {
   return { ok: true, json: async () => ({ selectedOrderId: body.selectedOrderId,
-    analysis: { intent, orderReferences: [{ reference: 'ORDER-1', quote: 'ORDER-1' }], reason: null,
+    analysis: { intent, orderReferences: [{ reference: 'ORDER-1', quote: 'ORDER-1' }], reason: null, cancellationConditions: [], unmetConditionRequirements: [],
       supportingQuotes: [body.message], reviewFlags: [], missingInformation: [], clarificationQuestions: [] },
     review: { status: body.selectedOrderId === 'ORDER-1' ? 'matched' : 'mismatched', canReviewCancellation: body.selectedOrderId === 'ORDER-1' && intent === 'cancellation_request', reviewId: 'mock-review' },
   }) };
@@ -343,4 +343,37 @@ test('Analysis explains missing or failed configuration and restores controls af
       assert.equal(ui.calls.filter(c => c.options.method === 'POST').length, 0);
     }
   }
+});
+
+test('Conditional evidence and blocking reason are visible; forced checkboxes cannot send cancellation or void', async () => {
+  const { createRequestAnalyzer } = require('../lib/request-analysis');
+  const message = 'Please cancel order ORDER-1 only if it has not shipped. If it has already shipped, keep the order.';
+  const analyzer = createRequestAnalyzer({ configured: true, analyze: async () => ({
+    intent: 'cancellation_request', orderReferences: [], reason: null,
+    cancellationConditions: [{ text: 'only if it has not shipped', quote: 'only if it has not shipped.' }],
+    unmetConditionRequirements: [{ text: 'keep the order', quote: 'If it has already shipped, keep the order.' }],
+    supportingQuotes: [message], missingInformation: [], clarificationQuestions: [],
+  }) });
+  const ui = analysisUI({ analyzeResponse: async body => ({ ok: true, json: async () => analyzer.analyze(body) }) });
+  await new Promise(resolve => setImmediate(resolve));
+  selectReviewOrder(ui);
+  ui.nodes.get('customer-request').value = message;
+  await ui.nodes.get('analyze-request').handlers.click();
+  const text = visibleText(ui.nodes.get('request-analysis'));
+  assert.match(text, /Not stated/);
+  assert.match(text, /only if it has not shipped/);
+  assert.match(text, /If it has already shipped, keep the order/);
+  assert.match(text, /merchant confirmation cannot override/);
+  assert.match(visibleText(ui.nodes.get('request-review')), /simulated local data; customer claims are not verified shipment facts/);
+  for (const id of ['confirm-cancellation', 'confirm-void']) {
+    assert.equal(ui.nodes.get(id).disabled, true);
+    ui.nodes.get(id).checked = true;
+    ui.nodes.get(id).handlers.change();
+  }
+  for (const id of ['cancel-local-order', 'void-authorization']) {
+    assert.equal(ui.nodes.get(id).disabled, true);
+    ui.nodes.get(id).disabled = false;
+    await ui.nodes.get(id).handlers.click();
+  }
+  assert.equal(ui.calls.filter(call => /\/(cancel|void)$/.test(call.url)).length, 0);
 });

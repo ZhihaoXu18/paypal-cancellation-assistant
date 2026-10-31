@@ -171,7 +171,7 @@ function updateMerchantControls() {
   document.getElementById('void-recommendation').textContent = data.authorizationStatus === 'VOIDED'
     ? 'Authorization already voided. Bank funds availability may update later.'
     : !currentCancellationReview()
-      ? 'Cancellation and void review blocked: analyze a cancellation request with exactly one reference matching the selected order. Resolve references manually. Matching is not customer authentication or merchant approval.'
+      ? requestReview?.review?.blockingReason || 'Cancellation and void review blocked: analyze a cancellation request with exactly one reference matching the selected order. Resolve references manually. Matching is not customer authentication or merchant approval.'
     : eligible
       ? `Recommendation: Void authorization. Supporting facts: local Order cancelled; simulated Not shipped; PayPal authorization CREATED for CAD 100.00. ${data.paymentFacts ? `Last verified capture count: ${data.paymentFacts.captureCount}.` : 'Capture count has not yet been verified.'} Backend must verify ownership, amount, and no captures again before execution. Merchant approval required.`
       : 'Void is blocked until the local order is cancelled, not shipped, and the authorization is eligible.';
@@ -272,9 +272,9 @@ function renderRequestReview() {
   };
   appendListSections(panel, [
     ['Unverified customer intent and claims', analysis ? [analysis.intent, analysis.reason?.text || 'No stated reason', ...analysis.orderReferences.map(item => `${item.reference} — quote: ${item.quote}`)] : ['No current analysis. Analyze the current customer text.']],
-    ['Order-reference match result (backend)', [statusText[match?.status] || 'Not evaluated.', 'A match is not customer authentication or approval to cancel.', match?.canReviewCancellation ? 'Eligible for manual merchant cancellation review only.' : 'Cancellation review blocked. Refunds and status questions cannot execute cancellation.']],
+    ['Order-reference match result (backend)', [statusText[match?.status] || 'Not evaluated.', ...(match?.blockingReason ? [match.blockingReason] : []), 'A match is not customer authentication or approval to cancel.', match?.canReviewCancellation ? 'Eligible for manual merchant cancellation review only.' : 'Cancellation review blocked. Refunds and status questions cannot execute cancellation.']],
     ['Verified PayPal facts (last retrieved snapshot)', data ? [`Order: ${data.orderId}`, `Order status: ${data.orderStatus || 'Not retrieved'}`, `Authorization: ${data.authorizationId || 'Not retrieved'}`, `Authorization status: ${data.authorizationStatus || 'Not retrieved'}`, `Amount: ${data.currency || 'Unknown'} ${data.amount || 'Unknown'}`, `Capture count: ${data.paymentFacts?.captureCount ?? 'Not verified'}`, `Verified at: ${data.paymentFacts?.verifiedAt || 'No void-eligibility verification yet'}`] : ['No selected order facts. Load an order using read-only lookup.']],
-    ['Simulated local cancellation and shipment facts', data ? [`Cancellation: ${data.localOrderStatus || 'Unknown'}`, `Shipment: ${data.shipmentStatus || 'Unknown'}`] : ['No local order selected.']],
+    ['Simulated local cancellation and shipment facts', data ? [`Cancellation: ${data.localOrderStatus || 'Unknown'}`, `Shipment: ${data.shipmentStatus || 'Unknown'} (simulated local data; customer claims are not verified shipment facts)`] : ['No local order selected.']],
   ]);
 }
 function appendListSections(panel, sections) {
@@ -315,6 +315,9 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
       ['Intent (unverified)', [analysis.intent]],
       ['Explicit order references', analysis.orderReferences.map(item => `${item.reference} — quote: ${item.quote}`)],
       ['Stated reason (unverified)', [analysis.reason?.text || 'Not stated']],
+      ['Cancellation conditions (unverified)', (analysis.cancellationConditions || []).map(item => `${item.text} — quote: ${item.quote}`)],
+      ['Requirements when conditions are not met (unverified)', (analysis.unmetConditionRequirements || []).map(item => `${item.text} — quote: ${item.quote}`)],
+      ['Execution restriction', [requestReview.review.blockingReason || 'No conditional-request restriction reported.', ...(analysis.conditionalRequest && !analysis.cancellationConditions?.length ? ['Conditional language detected, but no condition was extracted. Inspect the original customer message; execution remains blocked.'] : [])]],
       ['Supporting quotes', analysis.supportingQuotes], ['Review flags', analysis.reviewFlags],
       ['Missing information', analysis.missingInformation], ['Clarification questions', analysis.clarificationQuestions],
     ]);

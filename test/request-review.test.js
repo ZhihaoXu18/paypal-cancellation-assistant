@@ -7,7 +7,7 @@ const { createApp } = require('../app');
 function analyzer() {
   return createRequestAnalyzer({ configured: true, analyze: async message => ({
     intent: message.startsWith('Refund') ? 'refund_request' : message.startsWith('Status') ? 'status_question' : 'cancellation_request',
-    orderReferences: [], reason: null, supportingQuotes: [message], missingInformation: [], clarificationQuestions: [],
+    orderReferences: [], reason: null, cancellationConditions: [], unmetConditionRequirements: [], supportingQuotes: [message], missingInformation: [], clarificationQuestions: [],
   }) });
 }
 for (const [message, selectedOrderId, status, eligible] of [
@@ -128,5 +128,34 @@ test('Out-of-order analysis completion cannot restore an older server review', a
     release();
     assert.equal((await old).status, 409);
     assert.equal(paymentCalls, 0);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('Merchant confirmation and forged eligibility cannot override conditional blocking for cancel or void', async () => {
+  let calls = 0;
+  const message = 'Please cancel order TEST-123 only if it has not shipped.\nIf it has already shipped, keep the order.';
+  const conditionalAnalyzer = createRequestAnalyzer({ configured: true, analyze: async () => ({
+    intent: 'cancellation_request', orderReferences: [], reason: null,
+    cancellationConditions: [{ text: 'only if it has not shipped', quote: 'only if it has not shipped.' }],
+    unmetConditionRequirements: [{ text: 'keep the order', quote: 'If it has already shipped, keep the order.' }],
+    supportingQuotes: [message], missingInformation: [], clarificationQuestions: [],
+  }) });
+  const server = createApp({ cancel: () => { calls++; }, void: () => { calls++; } }, conditionalAnalyzer).listen(0, '127.0.0.1');
+  try {
+    await once(server, 'listening');
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const config = await fetch(base + '/api/analysis/config');
+    const cookie = config.headers.get('set-cookie').split(';')[0];
+    const post = (path, body) => fetch(base + path, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const response = await post('/api/analysis', { message, selectedOrderId: 'TEST-123' });
+    assert.equal(response.status, 200);
+    const { review, analysis } = await response.json();
+    assert.equal(analysis.reason, null);
+    assert.equal(review.canReviewCancellation, false);
+    for (const operation of ['cancel', 'void']) {
+      const attempt = await post(`/api/paypal/orders/TEST-123/${operation}`, { confirmed: true, message, reviewId: review.reviewId, orderId: 'TEST-123', authorizationId: 'AUTH-1', canReviewCancellation: true });
+      assert.equal(attempt.status, 409);
+    }
+    assert.equal(calls, 0);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });

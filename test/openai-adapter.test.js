@@ -4,7 +4,7 @@ const { createAnalysisProvider, ANALYSIS_SCHEMA } = require('../lib/analysis-pro
 const { createRequestAnalyzer } = require('../lib/request-analysis');
 const env = { OPENAI_API_KEY: 'test-only-api-key', OPENAI_MODEL: 'gpt-4.1-mini', PAYPAL_CLIENT_SECRET: 'never-send-paypal-secret' };
 const message = 'Please cancel order ORDER-1.';
-const analysis = { intent: 'cancellation_request', orderReferences: [{ reference: 'ORDER-1', quote: message }], reason: null, supportingQuotes: [message], missingInformation: [], clarificationQuestions: [] };
+const analysis = { intent: 'cancellation_request', orderReferences: [{ reference: 'ORDER-1', quote: message }], reason: null, cancellationConditions: [], unmetConditionRequirements: [], supportingQuotes: [message], missingInformation: [], clarificationQuestions: [] };
 const completed = value => ({ status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(value) }] }] });
 const response = data => ({ ok: true, status: 200, json: async () => data });
 
@@ -164,4 +164,26 @@ test('Mocked adapter preserves multiple supported references after correction an
   assert.equal(validated.explicitSelectedOrderMatch, false);
   assert.equal(validated.requiresMerchantReview, true);
   assert.equal(validated.customerClaimsVerified, false);
+});
+
+test('Mocked Responses adapter preserves conditional cancellation fields under the strict schema', async () => {
+  const customer = 'Please cancel order TEST-123 only if it has not shipped.\nIf it has already shipped, keep the order.';
+  const output = { ...analysis, reason: null,
+    orderReferences: [{ reference: 'TEST-123', quote: 'order TEST-123' }],
+    cancellationConditions: [{ text: 'only if it has not shipped', quote: 'only if it has not shipped.' }],
+    unmetConditionRequirements: [{ text: 'keep the order', quote: 'If it has already shipped, keep the order.' }],
+    supportingQuotes: [customer] };
+  const provider = createAnalysisProvider(env, async (url, options) => {
+    const body = JSON.parse(options.body);
+    assert.match(body.instructions, /Never decide whether a condition is satisfied/);
+    assert.match(body.instructions, /reason is null/);
+    assert.ok(body.text.format.schema.required.includes('cancellationConditions'));
+    assert.ok(body.text.format.schema.required.includes('unmetConditionRequirements'));
+    return response(completed(output));
+  });
+  const result = await createRequestAnalyzer(provider).analyze({ message: customer, selectedOrderId: 'TEST-123' });
+  assert.equal(result.analysis.reason, null);
+  assert.deepEqual(result.analysis.cancellationConditions, output.cancellationConditions);
+  assert.deepEqual(result.analysis.unmetConditionRequirements, output.unmetConditionRequirements);
+  assert.equal(result.review.canReviewCancellation, false);
 });

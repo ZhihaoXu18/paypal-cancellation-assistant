@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { createRequestAnalyzer } = require('../lib/request-analysis');
 const { createAnalysisProvider } = require('../lib/analysis-provider');
 function result(message, intent = 'cancellation_request', references = []) {
-  return { intent, orderReferences: references.map(reference => ({ reference, quote: message })), reason: null,
+  return { intent, orderReferences: references.map(reference => ({ reference, quote: message })), reason: null, cancellationConditions: [], unmetConditionRequirements: [],
     supportingQuotes: [message], missingInformation: [], clarificationQuestions: [] };
 }
 const analyzerFor = output => createRequestAnalyzer({ configured: true, analyze: async () => output });
@@ -176,4 +176,65 @@ test('Analysis requires valid customer text but no selected or authorized order'
     await assert.rejects(analyzer.analyze(invalid), /customer request/);
   }
   assert.equal(providerCalls, 1);
+});
+
+const conditionalMessage = 'Please cancel order TEST-123 only if it has not shipped.\nIf it has already shipped, keep the order.';
+function conditionalOutput() {
+  return { ...result(conditionalMessage, 'cancellation_request', ['TEST-123']),
+    cancellationConditions: [{ text: 'only if it has not shipped', quote: 'only if it has not shipped.' }],
+    unmetConditionRequirements: [{ text: 'keep the order', quote: 'If it has already shipped, keep the order.' }] };
+}
+test('Conditional cancellation preserves prerequisites and fallback separately without inventing a reason', async () => {
+  const { matchRequestToOrder } = require('../lib/request-analysis');
+  const output = conditionalOutput();
+  const analysis = await analyze(conditionalMessage, output, 'TEST-123');
+  assert.equal(analysis.reason, null);
+  assert.deepEqual(analysis.cancellationConditions, output.cancellationConditions);
+  assert.deepEqual(analysis.unmetConditionRequirements, output.unmetConditionRequirements);
+  assert.equal(analysis.customerClaimsVerified, false);
+  assert.equal(analysis.requiresMerchantReview, true);
+  assert.ok(analysis.reviewFlags.includes('conditional_request_requires_review'));
+  const review = matchRequestToOrder(analysis, 'TEST-123');
+  assert.equal(review.status, 'matched');
+  assert.equal(review.canReviewCancellation, false);
+  assert.equal(review.requiresManualResolution, true);
+  assert.match(review.blockingReason, /cannot override/);
+});
+for (const message of ['Cancel order ORDER-1 if it cannot arrive by Friday.', '如果周五前不能送达就取消 order ORDER-1。', conditionalMessage]) {
+  test(`Omitted model conditions cannot allow execution: ${message}`, async () => {
+    const output = await analyzerFor(result(message)).analyze({ message, selectedOrderId: message.includes('TEST-123') ? 'TEST-123' : 'ORDER-1' });
+    assert.equal(output.analysis.conditionalRequest, true);
+    assert.equal(output.review.canReviewCancellation, false);
+  });
+}
+for (const field of ['cancellationConditions', 'unmetConditionRequirements']) {
+  for (const evidence of [{ text: 'not shipped', quote: 'The warehouse confirmed not shipped' }, { text: 'arrives Friday', quote: conditionalMessage }, { text: '', quote: conditionalMessage }, { text: 'keep the order', quote: conditionalMessage, verified: true }]) {
+    test(`Strict validator rejects invalid ${field} evidence: ${JSON.stringify(evidence)}`, async () => {
+      const output = conditionalOutput(); output[field] = [evidence];
+      await assert.rejects(analyze(conditionalMessage, output, 'TEST-123'), /invalid or unsupported/);
+    });
+  }
+}
+test('Conditional clause cannot be accepted as the cancellation reason', async () => {
+  const output = conditionalOutput();
+  output.reason = output.cancellationConditions[0];
+  await assert.rejects(analyze(conditionalMessage, output, 'TEST-123'), /condition_as_reason/);
+});
+test('Plain shipment claim remains unverified and never becomes a shipment fact', async () => {
+  const message = 'Cancel order ORDER-1. It has not shipped.';
+  const output = await analyze(message, result(message));
+  assert.equal(output.customerClaimsVerified, false);
+  assert.equal(output.shipmentStatus, undefined);
+});
+
+test('Unsupported delivery deadline is preserved for inspection and blocks execution', async () => {
+  const message = 'Cancel order ORDER-1 if it cannot arrive by Friday.';
+  const output = { ...result(message), cancellationConditions: [{ text: 'if it cannot arrive by Friday', quote: 'if it cannot arrive by Friday.' }] };
+  const validated = await analyzerFor(output).analyze({ message, selectedOrderId: 'ORDER-1' });
+  assert.deepEqual(validated.analysis.cancellationConditions, output.cancellationConditions);
+  assert.equal(validated.review.canReviewCancellation, false);
+});
+test('Missing new schema fields are rejected rather than silently treated as unconditional', async () => {
+  const output = conditionalOutput(); delete output.cancellationConditions;
+  await assert.rejects(analyze(conditionalMessage, output, 'TEST-123'), /exact_fields/);
 });
