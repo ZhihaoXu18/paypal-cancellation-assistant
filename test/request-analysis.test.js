@@ -238,3 +238,39 @@ test('Missing new schema fields are rejected rather than silently treated as unc
   const output = conditionalOutput(); delete output.cancellationConditions;
   await assert.rejects(analyze(conditionalMessage, output, 'TEST-123'), /exact_fields/);
 });
+
+for (const opening of ['I ordered TEST-123 by mistake.', 'I placed order TEST-123 by mistake.']) {
+  test(`Explicit order phrasing preserves literal evidence and conditional blocking: ${opening}`, async () => {
+    const message = `${opening} Please cancel it unless it has already shipped; in that case, leave it alone.`;
+    const output = { ...result(message, 'cancellation_request', ['TEST-123']),
+      orderReferences: [{ reference: 'TEST-123', quote: opening }],
+      reason: { text: 'by mistake', quote: opening },
+      cancellationConditions: [{ text: 'unless it has already shipped', quote: 'unless it has already shipped' }],
+      unmetConditionRequirements: [{ text: 'leave it alone', quote: 'in that case, leave it alone.' }] };
+    const validated = await analyzerFor(output).analyze({ message, selectedOrderId: 'TEST-123' });
+    assert.deepEqual(validated.analysis.orderReferences, output.orderReferences);
+    assert.deepEqual(validated.analysis.reason, output.reason);
+    assert.deepEqual(validated.analysis.cancellationConditions, output.cancellationConditions);
+    assert.deepEqual(validated.analysis.unmetConditionRequirements, output.unmetConditionRequirements);
+    assert.equal(validated.analysis.customerClaimsVerified, false);
+    assert.equal(validated.review.status, 'matched');
+    assert.equal(validated.review.canReviewCancellation, false);
+    // With no model reference, validate() still independently extracts the identifier.
+    const omitted = await analyze(message, { ...output, orderReferences: [] }, 'TEST-123');
+    assert.deepEqual(omitted.orderReferences, [{ reference: 'TEST-123', quote: 'TEST-123' }]);
+  });
+}
+
+test('Ordered phrasing does not promote numbers, quantities, SKUs, dates or partial IDs to order references', async () => {
+  const message = 'I ordered TEST-123 by mistake. I ordered 2 items, quantity 3, for 456 dollars on 2026-10-31. I ordered SKU-42 and sku-99. I ordered TEST-888_extra. Please cancel it unless shipped.';
+  const output = result(message);
+  assert.deepEqual((await analyze(message, output, 'TEST-123')).orderReferences, [{ reference: 'TEST-123', quote: 'TEST-123' }]);
+  for (const reference of ['2', '3', '456', '2026-10-31', 'SKU-42', 'sku-99', 'TEST-888', 'TEST-888_extra', 'TEST-999']) {
+    await assert.rejects(analyze(message, result(message, 'cancellation_request', [reference]), 'TEST-123'), /invalid or unsupported/);
+  }
+  for (const customer of ['I ordered 2 items. Please cancel it.', 'I ordered SKU-42. Please cancel it.', 'I ordered 2026-10-31. Please cancel it.']) {
+    const validated = await analyzerFor(result(customer)).analyze({ message: customer, selectedOrderId: 'TEST-123' });
+    assert.deepEqual(validated.analysis.orderReferences, []);
+    assert.equal(validated.review.canReviewCancellation, false);
+  }
+});

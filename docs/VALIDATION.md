@@ -144,3 +144,40 @@ It establishes one successful local Sandbox happy path, not general checkout rel
 - Real fulfillment integration and customer authentication; current fulfillment remains simulated.
 
 This documentation-only update did not rerun the automated suite or issue AI/PayPal requests.
+
+## Conditional cancellation and order-reference coverage — 2026-10-31 America/Toronto
+
+This entry records the conditional-request fix already committed as `b3348d2`, the subsequent `ordered` extraction fix, and the verification below. Earlier entries describe their own historical runs; this entry does not repeat those payment operations.
+
+### Conditional cancellation
+
+The original analysis placed "only if it has not shipped" in the stated reason instead of preserving the customer's prerequisite and alternative instruction separately. The analysis schema, prompt, strict validator, and display now separate:
+
+- Cancellation reason, or null when no reason is stated.
+- Cancellation conditions, each with literal text and a verbatim source quote.
+- Requirements when conditions are not met, each with literal text and a verbatim source quote.
+
+For "Please cancel order TEST-123 only if it has not shipped. If it has already shipped, keep the order.", the expected reason is null, the condition is "only if it has not shipped", and the alternative requirement is to keep the order if already shipped. Evidence must be present verbatim in the original message; invented evidence and unsupported schema fields are rejected.
+
+Conditional requests are available for human inspection only. Backend review eligibility blocks both cancellation and void, even with merchant confirmation. A conservative conditional-language check also blocks recognized conditional phrasing when the model omits condition fields; it does not evaluate whether conditions are satisfied.
+
+### Order-reference extraction
+
+The reported input was "I ordered TEST-123 by mistake. Please cancel it unless it has already shipped; in that case, leave it alone." It produced `validation.rule=explicit_reference, field=orderReferences.reference`, whereas changing the opening to "I placed order TEST-123 by mistake." allowed analysis to succeed.
+
+Before changing code, local mocked-model and independent extraction checks reproduced the difference: the extractor recognized the `order` label but not the verb `ordered`. The minimal fix recognizes a complete alphabetic-prefix identifier after `ordered`, retaining literal source evidence. Bare quantities, numbers, dates, SKU-labelled products, partial identifiers, and fabricated references remain excluded in regression tests. Model-provided references still undergo the existing strict validation.
+
+The user reports that the original `ordered TEST-123` sentence also succeeded in the page retest after the fix, with output matching expectations.
+
+### Evidence sources and limits
+
+- The page retest output supplied/reported by the user came from actual AI calls. This is user-provided evidence; the documentation editor did not independently repeat those calls. The precise running revision and page-retest timestamps were not supplied.
+- Automated tests use mocked AI and PayPal responses. The previous reported result was 138/138 passing; the complete suite was rerun for this update using `npm test`: **138 tests passed, 0 failed, 0 skipped** on October 31, 2026 (America/Toronto).
+- Page blocking text alone does not prove the backend cannot be bypassed. Separate local HTTP regression tests submit merchant confirmation and forged eligibility for a conditional request, require HTTP 409 for both cancel and void, and verify zero calls to the mocked payment methods. This is automated regression evidence, not a production security audit.
+- Shipment status remains local simulated data. Customer statements about shipment are unverified claims. No condition is automatically evaluated for satisfaction.
+- Existing PayPal guards, merchant approval requirements, and stale-analysis invalidation remain covered by the full suite. No PayPal operation was performed in this round, and no new real AI or PayPal request was sent while preparing this update.
+- Coverage remains conservative and does not establish support for every natural-language expression or guarantee error-free model extraction.
+
+### Change review
+
+The reviewed changes for this update are limited to the extractor, its regression tests, and this validation record. `git diff --check` passed. No `.env`, credentials, local transaction records, or customer logs are included in the change set; the examples above use synthetic identifiers.
