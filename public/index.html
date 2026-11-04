@@ -6,6 +6,7 @@
     <title>Payment Authorization Review Assistant</title>
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
+    <script src="/shopify.js" defer></script>
   </head>
   <body>
     <main>
@@ -30,6 +31,16 @@
           <p>Verify the order and payment status, then Void authorization. Merchant approval required.</p>
           <p class="note">This page displays Mock data only and does not connect to PayPal or perform payment operations. Voiding an authorization does not guarantee immediate release of funds by the buyer’s bank.</p>
         </aside>
+      </article>
+      <article aria-labelledby="shopify-title">
+        <span class="badge">Shopify development store · Read-only</span>
+        <h2 id="shopify-title">Shopify order snapshot</h2>
+        <label for="shopify-order-id">Shopify Order GID</label>
+        <input id="shopify-order-id" type="text" maxlength="64" autocomplete="off" value="gid://shopify/Order/18973739417770">
+        <button id="lookup-shopify" type="button">Query Shopify order (read-only)</button>
+        <p id="shopify-status" role="status">No Shopify query has been sent. Query only after approving the real read-only lookup.</p>
+        <dl id="shopify-details"></dl>
+        <p class="note">Source: configured Shopify development store. A snapshot may become stale. UNFULFILLED alone does not authorize cancellation or void. Conditional requests remain blocked and merchant approval is still required. Shopify test-gateway orders are not mapped to PayPal authorizations; no shared transaction is established. PayPal local fulfillment remains simulated.</p>
       </article>
       <article aria-labelledby="sandbox-title">
         <span class="badge">Sandbox transaction · Not mock data</span>

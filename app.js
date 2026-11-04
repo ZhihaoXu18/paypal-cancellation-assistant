@@ -4,8 +4,9 @@ const { randomUUID, createHash } = require('node:crypto');
 const { createRequestAnalyzer, matchRequestToOrder } = require('./lib/request-analysis');
 const { AnalysisError } = require('./lib/analysis-provider');
 const { createPayPal, SafeError } = require('./lib/paypal');
+const { createShopify, ShopifyError } = require('./lib/shopify');
 
-function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) {
+function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), shopify = createShopify()) {
   const app = express();
   const sessions = new Set();
   const reviews = new Map();
@@ -60,6 +61,12 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer()) 
       res.json({ ...result, review: { ...review, reviewId: pending.id } });
     }
     catch (error) { res.status(error instanceof AnalysisError ? error.status : 500).json({ error: error instanceof AnalysisError ? error.message : 'AI analysis failed. No action was taken.' }); }
+  });
+  app.get('/api/shopify/order', validateApiRequest, async (req, res) => {
+    try { res.json(await shopify.order(req.query.id)); }
+    catch (error) {
+      res.status(error instanceof ShopifyError ? error.status : 500).json({ error: error instanceof ShopifyError ? error.message : 'Shopify lookup failed. No order state is assumed.' });
+    }
   });
   app.use('/api/paypal', validateApiRequest);
   const route = (handler) => async (req, res) => {

@@ -181,3 +181,12 @@ The user reports that the original `ordered TEST-123` sentence also succeeded in
 ### Change review
 
 The reviewed changes for this update are limited to the extractor, its regression tests, and this validation record. `git diff --check` passed. No `.env`, credentials, local transaction records, or customer logs are included in the change set; the examples above use synthetic identifiers.
+
+## Shopify development-store read-only adapter — 2026-11-03 America/Toronto
+
+- Added an isolated Shopify adapter and page panel; no existing request-review, local fulfillment, or PayPal execution policy is relaxed. The initial lookup ID is `gid://shopify/Order/18973739417770`.
+- Official documentation checked for the client credentials grant (installed Dev Dashboard app and store in the same organization), token expiry, GraphQL order fields and display-status enums. Requests use Admin API `2026-10` and only the order ID, name, financial status and fulfillment status. The source label denotes the configured development store; the store plan is not independently queried.
+- The browser sends no Shopify request on load. Tokens remain in backend memory. Unknown/missing statuses, inaccessible orders, partial GraphQL errors, permission failures, and network/timeout errors fail explicitly without assuming an unshipped order.
+- Full mocked suite: `npm test` — **165 passed, 0 failed, 0 skipped**. Coverage includes token reuse/expiry, request field minimization, output allowlisting, error sanitization, invalid domains/GIDs, status preservation, UI errors/stale responses, and HTTP conditional cancellation/void rejection after an UNFULFILLED snapshot.
+- No real Shopify authentication/query, AI call, Shopify mutation or PayPal operation was performed. No page result from the real development store has been verified; that lookup awaits user confirmation. Shopify test-gateway orders have no established transaction mapping to PayPal authorizations, and UNFULFILLED is not cancellation/void authority.
+- An existing uncommitted `.env.example` contained credential-like values. Its Shopify values were replaced with empty placeholders; `.env` was not edited. Credentials are not recorded here. No commit or push was performed.
