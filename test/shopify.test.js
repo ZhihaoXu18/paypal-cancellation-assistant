@@ -134,3 +134,46 @@ test('Fulfilled and partially fulfilled snapshots retain exact Shopify statuses 
     assert.equal(snapshot.canReviewCancellation, undefined);
   }
 });
+
+for (const [name, data, category, field, errorType] of [
+  ['protected order access', { data: { order: null }, errors: [{ message: 'This app is not approved to access the Order object. private-customer mock-secret', extensions: { code: 'ACCESS_DENIED' }, path: ['order'] }] }, 'GRAPHQL_ERRORS', 'order', 'PROTECTED_DATA_ACCESS_DENIED'],
+  ['ordinary permission error', { data: { order }, errors: [{ message: 'private-customer', extensions: { code: 'ACCESS_DENIED' } }] }, 'GRAPHQL_ERRORS', 'order', 'ACCESS_DENIED'],
+  ['GraphQL partial data', { data: { order }, errors: [{ message: 'private-customer', extensions: { code: 'PRIVATE-CODE' } }] }, 'GRAPHQL_ERRORS', undefined, undefined],
+  ['null order', { data: { order: null } }, 'ORDER_NULL', 'order', undefined],
+  ['missing order', { data: {} }, 'FIELD_MISSING', 'order', undefined],
+  ['missing status', { data: { order: { ...order, displayFulfillmentStatus: null } } }, 'FIELD_MISSING', 'displayFulfillmentStatus', undefined],
+  ['unsupported fulfillment', { data: { order: { ...order, displayFulfillmentStatus: 'PRIVATE-UNKNOWN-STATUS' } } }, 'UNSUPPORTED_STATUS', 'displayFulfillmentStatus', undefined],
+  ['unsupported payment', { data: { order: { ...order, displayFinancialStatus: 'PRIVATE-UNKNOWN-STATUS' } } }, 'UNSUPPORTED_STATUS', 'displayFinancialStatus', undefined],
+  ['wrong order ID', { data: { order: { ...order, id: 'gid://shopify/Order/2' } } }, 'ORDER_ID_MISMATCH', 'id', undefined],
+  ['invalid order type', { data: { order: [] } }, 'FIELD_MISSING', 'order', undefined],
+  ['invalid status type', { data: { order: { ...order, displayFinancialStatus: {} } } }, 'INVALID_FIELD_FORMAT', 'displayFinancialStatus', undefined],
+  ['null response', null, 'FIELD_MISSING', 'order', undefined],
+]) {
+  test(`Safe diagnostics distinguish ${name} without accepting failed data`, async () => {
+    const { service, calls } = fixture({ data });
+    await assert.rejects(service.order(id), error => {
+      assert.equal(error.category, category);
+      assert.equal(error.field, field);
+      assert.equal(error.errorType, errorType);
+      assert.doesNotMatch(JSON.stringify(error), /private-customer|mock-secret|PRIVATE-CODE|PRIVATE-UNKNOWN-STATUS/);
+      assert.doesNotMatch(error.message, /private-customer|mock-secret|PRIVATE-CODE|PRIVATE-UNKNOWN-STATUS/);
+      return true;
+    });
+    assert.equal(calls.length, 2);
+  });
+}
+test('HTTP route returns fixed protected-access diagnostics rather than raw GraphQL response', async () => {
+  const { service } = fixture({ data: { data: { order }, errors: [{ message: 'This app is not approved to access the Order object. private-customer', extensions: { code: 'ACCESS_DENIED' } }] } });
+  const server = createApp({}, {}, service).listen(0, '127.0.0.1');
+  try {
+    await once(server, 'listening');
+    const result = await fetch(`http://127.0.0.1:${server.address().port}/api/shopify/order?${new URLSearchParams({ id })}`);
+    assert.equal(result.status, 403);
+    const body = await result.json();
+    assert.equal(body.category, 'GRAPHQL_ERRORS');
+    assert.equal(body.field, 'order');
+    assert.equal(body.errorType, 'PROTECTED_DATA_ACCESS_DENIED');
+    assert.doesNotMatch(JSON.stringify(body), /private-customer|mock-token|mock-secret|#1001/);
+    assert.equal(body.fulfillmentStatus, undefined);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});

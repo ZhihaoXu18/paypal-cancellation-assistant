@@ -60,6 +60,8 @@ The page's separate Shopify panel starts with test order `gid://shopify/Order/18
 
 Tokens are kept in server memory, reused until shortly before expiry, and never returned to the browser or persisted. Authentication, permission, unknown-status, API, and timeout errors do not infer a shipment state. No Shopify mutation is implemented.
 
+An HTTP 200 GraphQL response can still contain `errors`. The adapter rejects partial data and reports fixed diagnostics: `GRAPHQL_ERRORS`, `ORDER_NULL`, `FIELD_MISSING`, `UNSUPPORTED_STATUS`, or `ORDER_ID_MISMATCH` (with fixed schema field names). `PROTECTED_DATA_ACCESS_DENIED` means the app must resolve its [protected-data access configuration](https://shopify.dev/docs/apps/launch/protected-customer-data) for the order resource; `read_orders` alone does not establish that this access is available. No customer name, email, address, or additional customer field is requested to diagnose this error. Unknown states remain blocked.
+
 This snapshot does not change selected PayPal orders, simulated local fulfillment, analysis, merchant approvals, or conditional-request blocking. `UNFULFILLED` alone cannot authorize cancellation or void. There is no transaction mapping between Shopify test-gateway orders and PayPal authorizations.
 
 ## Current scope

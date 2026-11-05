@@ -65,7 +65,9 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
   app.get('/api/shopify/order', validateApiRequest, async (req, res) => {
     try { res.json(await shopify.order(req.query.id)); }
     catch (error) {
-      res.status(error instanceof ShopifyError ? error.status : 500).json({ error: error instanceof ShopifyError ? error.message : 'Shopify lookup failed. No order state is assumed.' });
+      const known = error instanceof ShopifyError;
+      res.status(known ? error.status : 500).json({ error: known ? error.message : 'Shopify lookup failed. No order state is assumed.',
+        ...(known ? { category: error.category, field: error.field, errorType: error.errorType } : {}) });
     }
   });
   app.use('/api/paypal', validateApiRequest);
