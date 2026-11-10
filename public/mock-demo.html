@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-mock-demo="true">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mock demo — Conditional cancellation review</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body><main>
+    <header>
+      <p class="badge">Mock demo</p>
+      <h1>Conditional cancellation review</h1>
+      <p>Fictional request and fixed analysis. No AI, Shopify, or PayPal calls. No payment operations.</p>
+      <p id="health" role="status">Checking local demo…</p>
+    </header>
+    <article>
+      <h2>1. Load the fictional example</h2>
+      <p>Save Unable to confirm with a fictional note, reopen the saved review below, then save Condition met with a new fictional note. Expand Previous findings to see the old conclusion and note.</p>
+      <button id="load-mock-example" type="button">Load mock example</button>
+      <label for="customer-request">Fixed fictional request</label>
+      <textarea id="customer-request" rows="2" readonly>Please cancel order 1001 only if it hasn't shipped yet.</textarea>
+      <p id="analysis-order">Mock order reference: 1001. No real order is selected or authenticated.</p>
+      <button id="analyze-request" type="button" disabled>Reload fixed mock analysis</button>
+      <p id="analysis-status" role="status">No current analysis.</p>
+      <h3>Mock analysis — not AI output</h3>
+      <div id="request-analysis"></div>
+    </article>
+    <article>
+      <h2>2. Record a mock merchant finding</h2>
+      <p>All findings are fictional and never enable cancellation or void.</p>
+      <div id="request-review"></div>
+    </article>
+    <article>
+      <h2>3. Reopen the same mock review</h2>
+      <p>Demo reviews use separate in-memory storage and cookies. Refreshing this page preserves them; restarting the server clears them. Existing local review files are never used.</p>
+      <button id="refresh-condition-cases" type="button">Refresh saved mock reviews</button>
+      <p id="condition-cases-status" role="status"></p>
+      <ul id="condition-cases-list"></ul>
+      <div id="condition-case-detail"></div>
+    </article>
+    <!-- Shared controller bindings; real integration controls are unavailable in this page. -->
+    <div hidden aria-hidden="true"><fieldset disabled>
+      <input id="existing-order-id"><button id="lookup-sandbox" type="button" disabled>Unavailable</button>
+      <button id="refresh-sandbox" type="button" disabled>Unavailable</button><p id="sandbox-status"></p>
+      <section id="merchant-workflow" hidden><input id="confirm-cancellation" type="checkbox" disabled>
+        <input id="confirm-void" type="checkbox" disabled><button id="cancel-local-order" type="button" disabled>Unavailable</button>
+        <button id="void-authorization" type="button" disabled>Unavailable</button>
+        <p id="void-recommendation"></p><ul id="action-history"></ul>
+      </section>
+    </fieldset></div>
+  </main></body>
+</html>

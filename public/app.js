@@ -1,7 +1,9 @@
+const mockDemo = document.documentElement?.dataset.mockDemo === 'true';
+const apiPath = path => mockDemo ? '/demo' + path : path;
 async function checkHealth() {
   const indicator = document.getElementById('health');
   try {
-    const response = await fetch('/api/health');
+    const response = await fetch(apiPath('/api/health'));
     if (!response.ok) throw new Error('Health check failed');
     const health = await response.json();
     indicator.textContent = health.status === 'ok' ? 'Application status: Healthy' : 'Application status: Unhealthy';
@@ -41,7 +43,7 @@ document.getElementById('lookup-sandbox').addEventListener('click', async () => 
   } catch (error) { sandboxStatus.textContent = error.message; }
 });
 async function sandboxRequest(url, method = 'GET', body = {}, onResponse) {
-  const response = await fetch(url, { method, ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+  const response = await fetch(apiPath(url), { method, ...(method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
   if (onResponse) onResponse(response.status);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Sandbox request failed.');
@@ -151,7 +153,7 @@ async function loadSandboxCheckout() {
     sandboxStatus.textContent = 'Ready. Click PayPal and approve with your Sandbox Personal account.';
   } catch { sandboxStatus.textContent = 'Sandbox checkout is unavailable. Check backend configuration, network connectivity, and PayPal Sandbox availability.'; }
 }
-loadSandboxCheckout();
+if (!mockDemo) loadSandboxCheckout();
 
 function updateMerchantControls() {
   const data = currentSandbox;
@@ -240,7 +242,7 @@ function updateAnalysisControls(showStatus = true) {
   button.title = reason;
   document.getElementById('customer-request').disabled = merchantBusy;
   if (showStatus) document.getElementById('analysis-status').textContent = requestReview
-    ? reason || 'AI analysis complete. Unverified customer claims; merchant review required.'
+    ? reason || (mockDemo ? 'Mock analysis loaded. No AI request was sent.' : 'AI analysis complete. Unverified customer claims; merchant review required.')
     : `No current analysis. ${reason || 'Click Analyze request to analyze the current text.'}`;
 }
 document.getElementById('customer-request').addEventListener('input', () => { invalidateRequestReview(); updateAnalysisControls(); });
@@ -289,7 +291,7 @@ function renderConditionFinding(panel, review, reopened = false) {
     met: ['Condition met', 'Ready for further manual review. Verify order identity and authority separately.'],
   };
   appendListSections(panel, [
-    ...(reopened ? [[record.subject, ['Use the original request in your support system when checking the customer’s condition.']]] : [
+    ...(reopened ? [[record.subject, [mockDemo ? 'Refer to the fixed fictional request above. Demo findings are not real evidence.' : 'Use the original request in your support system when checking the customer’s condition.']]] : [
     ['Original customer request', [review.message]],
     ['What to verify', [
       ...(review.analysis.cancellationConditions || []).map(item => item.quote),
@@ -305,6 +307,27 @@ function renderConditionFinding(panel, review, reopened = false) {
       ? [outcomes[finding.outcome][0], finding.evidence, `Recorded at (UTC): ${finding.recordedAt}`, outcomes[finding.outcome][1]]
       : ['Pending verification. No merchant finding has been recorded.']],
   ]);
+  if (record) {
+    const history = record.priorFindings || [];
+    const details = document.createElement('details');
+    const heading = document.createElement('summary');
+    heading.textContent = `Previous findings (${history.length})`;
+    details.append(heading);
+    if (history.length) {
+      const list = document.createElement('ul');
+      for (const entry of history) {
+        const item = document.createElement('li');
+        item.textContent = `${entry.recordedAt} — ${outcomes[entry.outcome][0]} — ${entry.evidence}`;
+        list.append(item);
+      }
+      details.append(list);
+    } else {
+      const empty = document.createElement('p');
+      empty.textContent = 'No earlier findings recorded. Changes made before this feature cannot be recovered.';
+      details.append(empty);
+    }
+    panel.append(details);
+  }
   const form = document.createElement('form');
   const choice = document.createElement('select');
   choice.required = true;
@@ -317,7 +340,7 @@ function renderConditionFinding(panel, review, reopened = false) {
     const wrapper = document.createElement('label'); wrapper.textContent = label; wrapper.append(input); form.append(wrapper);
   };
   const subject = document.createElement('input');
-  subject.type = 'text'; subject.maxLength = 120; subject.value = record?.subject || '';
+  subject.type = 'text'; subject.maxLength = 120; subject.value = record?.subject || (mockDemo ? 'Mock demo — Order 1001' : '');
   if (!record) addLabel('Review label (optional; no customer details)', subject);
   if (finding) { choice.value = finding.outcome; note.value = finding.evidence; }
   const summary = document.createElement('textarea');
@@ -330,9 +353,9 @@ function renderConditionFinding(panel, review, reopened = false) {
   addLabel('Support ticket ID (optional; ID only)', ticket);
   addLabel('Verification result', choice);
   addLabel('Evidence note (avoid customer or payment details)', note);
-  const button = document.createElement('button'); button.type = 'submit'; button.textContent = 'Save review finding';
+  const button = document.createElement('button'); button.type = 'submit'; button.textContent = mockDemo ? 'Save mock finding' : 'Save review finding';
   const status = document.createElement('p'); status.setAttribute('role', 'status');
-  status.textContent = 'Saved reviews stay available in this browser. A finding does not enable cancellation or void.';
+  status.textContent = mockDemo ? 'Mock reviews stay in memory until server restart. No finding can enable payment operations.' : 'Saved reviews stay available in this browser. A finding does not enable cancellation or void.';
   form.append(button, status);
   panel.append(form);
   form.addEventListener('submit', async event => {
@@ -420,7 +443,7 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
   analysisBusy = true;
   updateAnalysisControls(false);
   document.getElementById('request-analysis').replaceChildren();
-  status.textContent = 'Analyzing untrusted customer content… No order action is being taken.';
+  status.textContent = mockDemo ? 'Loading fixed mock analysis… No external requests.' : 'Analyzing untrusted customer content… No order action is being taken.';
   try {
     const result = await sandboxRequest('/api/analysis', 'POST', { selectedOrderId, message });
     if (generation !== analysisGeneration || currentSandbox?.orderId !== selectedOrderId || document.getElementById('customer-request').value !== message) return;
@@ -438,10 +461,18 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
       ['Supporting quotes', analysis.supportingQuotes], ['Review flags', analysis.reviewFlags],
       ['Missing information', analysis.missingInformation], ['Clarification questions', analysis.clarificationQuestions],
     ]);
-    status.textContent = 'AI analysis complete. Unverified customer claims; merchant review required. No order or payment state changed.';
+    status.textContent = mockDemo ? 'Mock analysis loaded. No AI, Shopify, or PayPal request was sent.' : 'AI analysis complete. Unverified customer claims; merchant review required. No order or payment state changed.';
   } catch (error) {
     if (generation === analysisGeneration) status.textContent = error.message;
   } finally { if (generation === analysisGeneration) { analysisBusy = false; updateAnalysisControls(false); } }
 });
 invalidateRequestReview();
+document.getElementById('load-mock-example')?.addEventListener('click', async () => {
+  if (!mockDemo) return;
+  const input = document.getElementById('customer-request');
+  input.value = "Please cancel order 1001 only if it hasn't shipped yet.";
+  invalidateRequestReview();
+  await loadAnalysisConfig();
+  document.getElementById('analyze-request').click();
+});
 loadAnalysisConfig().then(loadConditionCases);

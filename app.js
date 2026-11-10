@@ -6,9 +6,14 @@ const { AnalysisError } = require('./lib/analysis-provider');
 const { createPayPal, SafeError } = require('./lib/paypal');
 const { createConditionCases } = require('./lib/condition-cases');
 const { createShopify, ShopifyError } = require('./lib/shopify');
+const { createMockAnalyzer } = require('./lib/mock-demo');
 
-function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), shopify = createShopify(), cases = createConditionCases()) {
+function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), shopify = createShopify(), cases = createConditionCases(), options = {}) {
   const app = express();
+  const mockDemo = options.mockDemo === true;
+  const sessionCookie = mockDemo ? 'mock_sandbox_session' : 'sandbox_session';
+  const ownerCookie = mockDemo ? 'mock_condition_cases' : 'condition_cases';
+  const cookiePrefix = mockDemo ? '/demo' : '';
   const sessions = new Set();
   const reviews = new Map();
   const digest = message => createHash('sha256').update(message).digest('hex');
@@ -23,14 +28,27 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
     return review;
   }
   app.disable('x-powered-by');
+  if (mockDemo) {
+    app.use('/api', (req, res, next) => {
+      if (!['/health', '/analysis/config', '/analysis', '/analysis/condition-review', '/analysis/condition-cases'].includes(req.path) &&
+        !/^\/analysis\/condition-cases\/[a-f0-9-]+$/.test(req.path)) {
+        return res.status(403).json({ error: 'Mock demo: external integrations and payment operations are disabled.' });
+      }
+      next();
+    });
+  } else {
+    // A separate app instance, in-memory store and cookies keep demo findings out of real records.
+    app.use('/demo', createApp({}, createMockAnalyzer(), {}, createConditionCases(), { mockDemo: true }));
+    app.get('/mock-demo', (req, res) => res.sendFile(path.join(__dirname, 'public/mock-demo.html')));
+  }
   app.use('/api', (req, res, next) => {
     const cookie = req.get('cookie') || '';
-    let session = cookie.match(/(?:^|;\s*)sandbox_session=([a-f0-9-]{36})(?:;|$)/)?.[1];
+    let session = cookie.match(new RegExp(`(?:^|;\\s*)${sessionCookie}=([a-f0-9-]{36})(?:;|$)`))?.[1];
     if (!sessions.has(session)) {
       session = randomUUID(); sessions.add(session);
-      res.cookie('sandbox_session', session, { httpOnly: true, sameSite: 'strict', path: '/api' });
+      res.cookie(sessionCookie, session, { httpOnly: true, sameSite: 'strict', path: cookiePrefix + '/api' });
       // Remove the previous narrower cookie so analysis and payment routes share one owner.
-      res.clearCookie('sandbox_session', { path: '/api/paypal' });
+      if (!mockDemo) res.clearCookie('sandbox_session', { path: '/api/paypal' });
     }
     req.sandboxSession = session;
     next();
@@ -66,10 +84,10 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
   });
   function caseOwner(req, res, next) {
     const cookie = req.get('cookie') || '';
-    let owner = cookie.match(/(?:^|;\s*)condition_cases=([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?:;|$)/)?.[1];
+    let owner = cookie.match(new RegExp(`(?:^|;\\s*)${ownerCookie}=([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?:;|$)`))?.[1];
     if (!owner) {
       owner = randomUUID();
-      res.cookie('condition_cases', owner, { httpOnly: true, sameSite: 'strict', path: '/api/analysis', maxAge: 365 * 86400000 });
+      res.cookie(ownerCookie, owner, { httpOnly: true, sameSite: 'strict', path: cookiePrefix + '/api/analysis', maxAge: 365 * 86400000 });
     }
     req.caseOwner = owner;
     next();
@@ -85,6 +103,15 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
     if (!['met', 'not_met', 'unknown'].includes(outcome) ||
       typeof evidence !== 'string' || !evidence.trim() || evidence.length > 500) return null;
     return { outcome, evidence: evidence.trim(), recordedAt: new Date().toISOString() };
+  }
+  function findingRevision(previous, finding) {
+    if (!previous) return { finding, priorFindings: [] };
+    const current = previous.finding;
+    const history = previous.priorFindings || [];
+    if (current.outcome === finding.outcome && current.evidence === finding.evidence) {
+      return { finding: current, priorFindings: history };
+    }
+    return { finding, priorFindings: [current, ...history].slice(0, 25) };
   }
   function reviewContext(body, previous = {}) {
     const context = {};
@@ -120,7 +147,7 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
     if (!finding) return res.status(400).json({ error: invalidFinding });
     const context = reviewContext(req.body, record);
     if (!context) return res.status(400).json({ error: invalidContext });
-    const updated = { ...record, ...context, version: record.version + 1, finding };
+    const updated = { ...record, ...context, version: record.version + 1, ...findingRevision(record, finding) };
     cases.save(req.caseOwner, updated);
     res.json({ case: updated });
   }));
@@ -141,10 +168,10 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
     const context = reviewContext(req.body, previous || {});
     if (!context) return res.status(400).json({ error: invalidContext });
     const record = { ...context, id: previous?.id || randomUUID(), subject: subject?.trim() || previous?.subject || 'Conditional cancellation',
-      version: (previous?.version || 0) + 1, finding };
+      version: (previous?.version || 0) + 1, ...findingRevision(previous, finding) };
     cases.save(req.caseOwner, record);
     current.caseId = record.id;
-    res.json({ finding, case: record });
+    res.json({ finding: record.finding, case: record });
   }));
   app.get('/api/shopify/order', validateApiRequest, async (req, res) => {
     try { res.json(await shopify.order(req.query.id)); }
@@ -183,6 +210,7 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
   }));
   app.get('/api/paypal/orders/:id', route(req => paypal.status(req.params.id, req.sandboxSession)));
   app.use((error, req, res, next) => { res.status(400).json({ error: 'Invalid JSON request.' }); });
+  if (mockDemo) app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public/mock-demo.html')));
   app.use(express.static(path.join(__dirname, 'public')));
   return app;
 }

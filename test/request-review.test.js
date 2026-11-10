@@ -264,7 +264,18 @@ test('Saved review survives restart, rejects another browser, and cannot authori
     assert.equal(updatedCase.finding.outcome, 'met');
     assert.equal(updatedCase.conditionSummary, 'Cancel only if not shipped.');
     assert.equal(updatedCase.supportTicket, 'CS-1043');
-    assert.equal((await post(url, update, browser)).status, 409);
+    assert.deepEqual(updatedCase.priorFindings, [detail.case.finding]);
+    const contextEdit = await post(url, { ...update, version: updatedCase.version, supportTicket: 'CS-1044' }, browser);
+    assert.equal(contextEdit.status, 200);
+    const { case: contextEdited } = await contextEdit.json();
+    assert.deepEqual(contextEdited.finding, updatedCase.finding);
+    assert.deepEqual(contextEdited.priorFindings, updatedCase.priorFindings);
+    await close(servers.shift());
+    base = await start();
+    const restored = await (await fetch(base + listPath + '/' + saved.case.id, { headers })).json();
+    assert.deepEqual(restored.case.priorFindings, [detail.case.finding]);
+
+    assert.equal((await post(base + listPath + '/' + saved.case.id, update, browser)).status, 409);
     for (const operation of ['cancel', 'void']) {
       const result = await post(base + '/api/paypal/orders/ORDER-1/' + operation, { confirmed: true, message, reviewId: saved.case.id }, browser);
       assert.equal(result.status, 409);
