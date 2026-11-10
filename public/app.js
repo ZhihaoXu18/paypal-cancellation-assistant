@@ -276,7 +276,124 @@ function renderRequestReview() {
     ['Verified PayPal facts (last retrieved snapshot)', data ? [`Order: ${data.orderId}`, `Order status: ${data.orderStatus || 'Not retrieved'}`, `Authorization: ${data.authorizationId || 'Not retrieved'}`, `Authorization status: ${data.authorizationStatus || 'Not retrieved'}`, `Amount: ${data.currency || 'Unknown'} ${data.amount || 'Unknown'}`, `Capture count: ${data.paymentFacts?.captureCount ?? 'Not verified'}`, `Verified at: ${data.paymentFacts?.verifiedAt || 'No void-eligibility verification yet'}`] : ['No selected order facts. Load an order using read-only lookup.']],
     ['Simulated local cancellation and shipment facts', data ? [`Cancellation: ${data.localOrderStatus || 'Unknown'}`, `Shipment: ${data.shipmentStatus || 'Unknown'} (simulated local data; customer claims are not verified shipment facts)`] : ['No local order selected.']],
   ]);
+  if (analysis?.intent === 'cancellation_request' && match?.blockingReason && match.reviewId) {
+    renderConditionFinding(panel, requestReview);
+  }
 }
+function renderConditionFinding(panel, review, reopened = false) {
+  const record = reopened ? review : review.savedCase;
+  const finding = record?.finding;
+  const outcomes = {
+    unknown: ['Unable to confirm', 'Keep pending. Obtain independent evidence before deciding.'],
+    not_met: ['Condition not met', 'Close this review without cancelling under the customer’s condition.'],
+    met: ['Condition met', 'Ready for further manual review. Verify order identity and authority separately.'],
+  };
+  appendListSections(panel, [
+    ...(reopened ? [[record.subject, ['Use the original request in your support system when checking the customer’s condition.']]] : [
+    ['Original customer request', [review.message]],
+    ['What to verify', [
+      ...(review.analysis.cancellationConditions || []).map(item => item.quote),
+      'Review every condition in the original request. For shipping, confirm carrier handoff with the warehouse or carrier. Shopify UNFULFILLED alone is not proof of no handoff.',
+      'A Shopify lookup is separate from this request and does not link a PayPal transaction.',
+    ]],
+    ]),
+    ...(record ? [['Review context', [
+      record.conditionSummary ? `Condition to verify: ${record.conditionSummary}` : 'No condition summary recorded.',
+      record.supportTicket ? `Support ticket: ${record.supportTicket}` : 'No support ticket recorded.',
+    ]]] : []),
+    ['Merchant finding', finding
+      ? [outcomes[finding.outcome][0], finding.evidence, `Recorded at (UTC): ${finding.recordedAt}`, outcomes[finding.outcome][1]]
+      : ['Pending verification. No merchant finding has been recorded.']],
+  ]);
+  const form = document.createElement('form');
+  const choice = document.createElement('select');
+  choice.required = true;
+  for (const [value, label] of [['', 'Choose a finding'], ...Object.entries(outcomes).map(([key, [name]]) => [key, name])]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; choice.append(option);
+  }
+  const note = document.createElement('textarea');
+  note.required = true; note.maxLength = 500; note.rows = 2;
+  const addLabel = (label, input) => {
+    const wrapper = document.createElement('label'); wrapper.textContent = label; wrapper.append(input); form.append(wrapper);
+  };
+  const subject = document.createElement('input');
+  subject.type = 'text'; subject.maxLength = 120; subject.value = record?.subject || '';
+  if (!record) addLabel('Review label (optional; no customer details)', subject);
+  if (finding) { choice.value = finding.outcome; note.value = finding.evidence; }
+  const summary = document.createElement('textarea');
+  summary.rows = 2; summary.maxLength = 240; summary.value = record?.conditionSummary || '';
+  summary.placeholder = 'e.g. Cancel only if the order has not shipped';
+  const ticket = document.createElement('input');
+  ticket.type = 'text'; ticket.maxLength = 64; ticket.value = record?.supportTicket || '';
+  ticket.placeholder = 'e.g. CS-1042';
+  addLabel('Condition to verify (optional; summarize without customer details)', summary);
+  addLabel('Support ticket ID (optional; ID only)', ticket);
+  addLabel('Verification result', choice);
+  addLabel('Evidence note (avoid customer or payment details)', note);
+  const button = document.createElement('button'); button.type = 'submit'; button.textContent = 'Save review finding';
+  const status = document.createElement('p'); status.setAttribute('role', 'status');
+  status.textContent = 'Saved reviews stay available in this browser. A finding does not enable cancellation or void.';
+  form.append(button, status);
+  panel.append(form);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (button.disabled || (!reopened && requestReview !== review)) return;
+    button.disabled = true;
+    const payload = { outcome: choice.value, evidence: note.value, version: record?.version,
+      conditionSummary: summary.value, supportTicket: ticket.value };
+    try {
+      const result = reopened
+        ? await sandboxRequest(`/api/analysis/condition-cases/${encodeURIComponent(record.id)}`, 'POST', payload)
+        : await sandboxRequest('/api/analysis/condition-review', 'POST', {
+          ...payload, reviewId: review.review.reviewId, message: review.message, ...(!record ? { subject: subject.value } : {}),
+        });
+      if (reopened && panel.contains(form)) {
+        panel.replaceChildren();
+        renderConditionFinding(panel, result.case, true);
+      } else if (!reopened && requestReview === review) {
+        review.savedCase = result.case;
+        renderRequestReview();
+      }
+      void loadConditionCases();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally { button.disabled = false; }
+  });
+}
+let caseListGeneration = 0;
+let caseDetailGeneration = 0;
+async function loadConditionCases() {
+  const list = document.getElementById('condition-cases-list');
+  if (!list) return;
+  const status = document.getElementById('condition-cases-status');
+  const detail = document.getElementById('condition-case-detail');
+  const generation = ++caseListGeneration;
+  try {
+    const result = await sandboxRequest('/api/analysis/condition-cases');
+    if (generation !== caseListGeneration) return;
+    list.replaceChildren();
+    status.textContent = result.cases.length ? '' : 'No saved conditional reviews in this browser.';
+    for (const record of result.cases) {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      const label = { unknown: 'Pending verification', met: 'Condition met', not_met: 'Condition not met' }[record.outcome];
+      button.type = 'button'; button.textContent = `${record.subject} — ${label} — ${record.recordedAt}`;
+      button.addEventListener('click', async () => {
+        const opening = ++caseDetailGeneration;
+        detail.replaceChildren();
+        status.textContent = 'Opening review…';
+        try {
+          const result = await sandboxRequest(`/api/analysis/condition-cases/${encodeURIComponent(record.id)}`);
+          if (opening !== caseDetailGeneration) return;
+          renderConditionFinding(detail, result.case, true);
+          status.textContent = '';
+        } catch (error) { if (opening === caseDetailGeneration) status.textContent = error.message; }
+      });
+      item.append(button); list.append(item);
+    }
+  } catch (error) { if (generation === caseListGeneration) status.textContent = error.message; }
+}
+document.getElementById('refresh-condition-cases')?.addEventListener('click', loadConditionCases);
 function appendListSections(panel, sections) {
   for (const [label, values] of sections) {
     const title = document.createElement('h4'); title.textContent = label; panel.append(title);
@@ -327,4 +444,4 @@ document.getElementById('analyze-request').addEventListener('click', async () =>
   } finally { if (generation === analysisGeneration) { analysisBusy = false; updateAnalysisControls(false); } }
 });
 invalidateRequestReview();
-loadAnalysisConfig();
+loadAnalysisConfig().then(loadConditionCases);

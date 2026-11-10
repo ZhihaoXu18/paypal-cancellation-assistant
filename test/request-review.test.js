@@ -159,3 +159,119 @@ test('Merchant confirmation and forged eligibility cannot override conditional b
     assert.equal(calls, 0);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+
+test('Conditional findings require evidence and stay bound to the active review without opening payment gates', async () => {
+  let paymentCalls = 0;
+  const forbidden = () => { paymentCalls++; throw new Error('Payment operation reached'); };
+  const server = createApp({ cancel: forbidden, void: forbidden }, analyzer()).listen(0, '127.0.0.1');
+  try {
+    await once(server, 'listening');
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const config = await fetch(base + '/api/analysis/config');
+    let cookie = config.headers.get('set-cookie').split(';')[0];
+    let version;
+    let id;
+    const post = (path, body, session = cookie) => fetch(base + path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: session }, body: JSON.stringify(body),
+    });
+    const message = 'Cancel ORDER-1 if it has not shipped.';
+    const analyze = async message => (await (await post('/api/analysis', { message, selectedOrderId: 'ORDER-1' })).json()).review;
+    const path = '/api/analysis/condition-review';
+    const review = await analyze(message);
+    const body = { reviewId: review.reviewId, message, outcome: 'met', evidence: 'Warehouse confirmed no carrier handoff.' };
+    assert.equal(review.canReviewCancellation, false);
+    assert.equal((await post(path, body, '')).status, 409);
+    assert.equal((await post(path, { ...body, message: message + ' Changed.' })).status, 409);
+    assert.equal((await post(path, { ...body, evidence: ' ' })).status, 400);
+    assert.equal((await post(path, { ...body, outcome: 'approved' })).status, 400);
+    for (const outcome of ['unknown', 'not_met', 'met']) {
+      const res = await post(path, { ...body, outcome, version });
+      assert.equal(res.status, 200);
+      const { finding, case: saved } = await res.json();
+      if (!id) {
+        id = saved.id;
+        cookie += '; ' + res.headers.getSetCookie().find(value => value.startsWith('condition_cases=')).split(';')[0];
+      }
+      assert.equal(saved.id, id);
+      version = saved.version;
+      assert.equal(finding.outcome, outcome);
+      assert.equal(finding.evidence, body.evidence);
+      assert.ok(Number.isFinite(Date.parse(finding.recordedAt)));
+      for (const operation of ['cancel', 'void']) {
+        assert.equal((await post('/api/paypal/orders/ORDER-1/' + operation, { ...body, confirmed: true })).status, 409);
+      }
+    }
+    const ordinaryMessage = 'Cancel ORDER-1.';
+    const ordinary = await analyze(ordinaryMessage);
+    assert.equal((await post(path, body)).status, 409);
+    assert.equal((await post(path, { ...body, reviewId: ordinary.reviewId, message: ordinaryMessage })).status, 409);
+    assert.equal(paymentCalls, 0);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('Saved review survives restart, rejects another browser, and cannot authorize a payment', async () => {
+  const fs = require('node:fs/promises');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { createConditionCases } = require('../lib/condition-cases');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'condition-cases-test-'));
+  const servers = [];
+  let paymentCalls = 0;
+  const forbidden = () => { paymentCalls++; throw new Error('Payment operation reached'); };
+  async function start() {
+    const server = createApp({ cancel: forbidden, void: forbidden }, analyzer(), {}, createConditionCases(directory)).listen(0, '127.0.0.1');
+    servers.push(server);
+    await once(server, 'listening');
+    return 'http://127.0.0.1:' + server.address().port;
+  }
+  const close = async server => {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  };
+  const getCookie = (response, name) => response.headers.getSetCookie().find(value => value.startsWith(name + '=')).split(';')[0];
+  const post = (url, body, cookie) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body) });
+  try {
+    let base = await start();
+    const listPath = '/api/analysis/condition-cases';
+    const empty = await fetch(base + listPath);
+    const browser = getCookie(empty, 'condition_cases');
+    const session = getCookie(empty, 'sandbox_session');
+    const message = 'Cancel ORDER-1 if it has not shipped.';
+    const { review } = await (await post(base + '/api/analysis', { message, selectedOrderId: 'ORDER-1' }, session)).json();
+    const saved = await (await post(base + '/api/analysis/condition-review', {
+      message, reviewId: review.reviewId, outcome: 'unknown', subject: 'Warehouse follow-up', evidence: 'Waiting for carrier confirmation.',
+      conditionSummary: 'Cancel only if not shipped.', supportTicket: 'CS-1042',
+    }, session + '; ' + browser)).json();
+    await close(servers.shift());
+    base = await start();
+    const headers = { Cookie: browser };
+    const { cases } = await (await fetch(base + listPath, { headers })).json();
+    assert.equal(cases.length, 1);
+    assert.equal(cases[0].outcome, 'unknown');
+    const url = base + listPath + '/' + saved.case.id;
+    const detail = await (await fetch(url, { headers })).json();
+    assert.equal(detail.case.finding.evidence, 'Waiting for carrier confirmation.');
+    assert.ok(!JSON.stringify(detail).includes(message));
+    assert.equal(detail.case.conditionSummary, 'Cancel only if not shipped.');
+    assert.equal(detail.case.supportTicket, 'CS-1042');
+    assert.equal((await fetch(url)).status, 404);
+    const update = { version: detail.case.version, outcome: 'met', evidence: 'Warehouse confirmed no handoff.' };
+    assert.equal((await post(url, update, '')).status, 404);
+    assert.equal((await post(url, { ...update, supportTicket: 'https://example.test' }, browser)).status, 400);
+    const updated = await post(url, { ...update, supportTicket: 'CS-1043' }, browser);
+    assert.equal(updated.status, 200);
+    const updatedCase = (await updated.json()).case;
+    assert.equal(updatedCase.finding.outcome, 'met');
+    assert.equal(updatedCase.conditionSummary, 'Cancel only if not shipped.');
+    assert.equal(updatedCase.supportTicket, 'CS-1043');
+    assert.equal((await post(url, update, browser)).status, 409);
+    for (const operation of ['cancel', 'void']) {
+      const result = await post(base + '/api/paypal/orders/ORDER-1/' + operation, { confirmed: true, message, reviewId: saved.case.id }, browser);
+      assert.equal(result.status, 409);
+    }
+    assert.equal(paymentCalls, 0);
+  } finally {
+    await Promise.all(servers.map(close));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

@@ -25,7 +25,9 @@ function persistRecord(record) {
   fs.writeFileSync(temporary, JSON.stringify(record, null, 2), { mode: 0o600 });
   fs.renameSync(temporary, destination);
 }
-const app = createApp(createPayPal(process.env, fetch, recovered, persistRecord));
+const { createConditionCases } = require('./lib/condition-cases');
+const cases = createConditionCases(path.join(__dirname, '.condition-cases'));
+const app = createApp(createPayPal(process.env, fetch, recovered, persistRecord), undefined, undefined, cases);
 
 const host = '127.0.0.1';
 const port = 3000;

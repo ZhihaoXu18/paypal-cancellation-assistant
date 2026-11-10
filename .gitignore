@@ -16,3 +16,5 @@ logs/
 *.log
 customer-request-logs/
 transaction-records/
+
+.condition-cases/

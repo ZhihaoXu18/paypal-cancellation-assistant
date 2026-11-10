@@ -81,3 +81,9 @@ Tests mock external services and cover order-reference matching, stale analysis,
 Manual Sandbox evidence and known issues are in [validation notes](docs/VALIDATION.md).
 
 [ISC license](LICENSE)
+
+### Recording a conditional cancellation finding
+
+Analyze a conditional cancellation request to open the merchant finding form. Compare the original request with independent evidence, then save whether the condition was met, was not met, or could not be confirmed. Include a brief evidence note without customer or payment details. For shipment questions, verify handoff with the warehouse or carrier; a Shopify `UNFULFILLED` snapshot does not establish whether handoff took place.
+
+The saved review stores the optional merchant label, condition summary and support ticket ID, latest finding, evidence note, and timestamp in the local ignored `.condition-cases/` directory. The original customer request is not stored. Reopen a saved review in the same browser after a refresh or server restart; clearing cookies loses access. This is a local, single-browser workflow, without account-based sharing or a history of revisions. A saved review does not link Shopify to PayPal or enable cancellation or void.

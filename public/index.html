@@ -72,6 +72,14 @@
           <p>Resolve missing, ambiguous, multiple, or mismatched references manually. Correct the request or selected order, then analyze again. No order is selected automatically.</p>
           <div id="request-review"></div>
         </section>
+        <section aria-labelledby="saved-cases-title">
+          <h3 id="saved-cases-title">Saved conditional reviews</h3>
+          <p>Reopen a review from this browser after you receive more evidence.</p>
+          <button id="refresh-condition-cases" type="button">Refresh saved reviews</button>
+          <p id="condition-cases-status" role="status"></p>
+          <ul id="condition-cases-list"></ul>
+          <div id="condition-case-detail"></div>
+        </section>
         <section id="merchant-workflow" hidden aria-labelledby="merchant-title">
           <h3 id="merchant-title">Merchant cancellation and void review</h3>
           <p>Fulfillment state is simulated local data, separate from PayPal order status.</p>
