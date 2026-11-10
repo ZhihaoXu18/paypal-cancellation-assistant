@@ -217,9 +217,17 @@ test('Saved review survives restart, rejects another browser, and cannot authori
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'condition-cases-test-'));
   const servers = [];
   let paymentCalls = 0;
+  let shopifyCalls = 0;
+  const orderId = 'gid://shopify/Order/18973739417770';
+  const shopify = { order: async id => {
+    shopifyCalls++;
+    if (id !== orderId) throw new Error('Mock Shopify lookup failed');
+    return { orderId: id, orderNumber: '#1001', paymentStatus: 'PAID', fulfillmentStatus: 'UNFULFILLED',
+      queriedAt: '2026-11-09T04:46:30.860Z', source: 'Shopify development store', extra: 'Do not persist' };
+  } };
   const forbidden = () => { paymentCalls++; throw new Error('Payment operation reached'); };
   async function start() {
-    const server = createApp({ cancel: forbidden, void: forbidden }, analyzer(), {}, createConditionCases(directory)).listen(0, '127.0.0.1');
+    const server = createApp({ cancel: forbidden, void: forbidden }, analyzer(), shopify, createConditionCases(directory)).listen(0, '127.0.0.1');
     servers.push(server);
     await once(server, 'listening');
     return 'http://127.0.0.1:' + server.address().port;
@@ -270,9 +278,25 @@ test('Saved review survives restart, rejects another browser, and cannot authori
     const { case: contextEdited } = await contextEdit.json();
     assert.deepEqual(contextEdited.finding, updatedCase.finding);
     assert.deepEqual(contextEdited.priorFindings, updatedCase.priorFindings);
+    const snapshotUrl = url + '/shopify-snapshot';
+    const attach = { version: contextEdited.version, orderId, confirmed: true };
+    assert.equal((await post(snapshotUrl, { ...attach, confirmed: false }, browser)).status, 400);
+    assert.equal((await post(snapshotUrl, attach, '')).status, 404);
+    assert.equal((await post(snapshotUrl, { ...attach, version: attach.version - 1 }, browser)).status, 409);
+    assert.equal(shopifyCalls, 0);
+    const attached = await post(snapshotUrl, attach, browser);
+    assert.equal(attached.status, 200);
+    const savedSnapshot = await attached.json();
+    assert.deepEqual(savedSnapshot.shopifySnapshot, { orderId, orderNumber: '#1001', paymentStatus: 'PAID',
+      fulfillmentStatus: 'UNFULFILLED', queriedAt: '2026-11-09T04:46:30.860Z', source: 'Shopify development store' });
+    const failed = await post(snapshotUrl, { ...attach, version: savedSnapshot.version, orderId: 'gid://shopify/Order/2' }, browser);
+    assert.equal(failed.status, 500);
+    const evidenceEdit = await post(url, { ...update, version: savedSnapshot.version, supportTicket: 'CS-1045' }, browser);
+    assert.equal(evidenceEdit.status, 200);
     await close(servers.shift());
     base = await start();
     const restored = await (await fetch(base + listPath + '/' + saved.case.id, { headers })).json();
+    assert.deepEqual(restored.case.shopifySnapshot, savedSnapshot.shopifySnapshot);
     assert.deepEqual(restored.case.priorFindings, [detail.case.finding]);
 
     assert.equal((await post(base + listPath + '/' + saved.case.id, update, browser)).status, 409);

@@ -382,6 +382,9 @@ function renderConditionFinding(panel, review, reopened = false) {
       status.textContent = error.message;
     } finally { button.disabled = false; }
   });
+  if (reopened && typeof window !== 'undefined' && window.location.pathname === '/') {
+    window.renderReviewShopify?.(panel, record);
+  }
 }
 let caseListGeneration = 0;
 let caseDetailGeneration = 0;

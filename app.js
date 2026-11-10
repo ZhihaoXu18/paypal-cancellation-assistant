@@ -167,12 +167,39 @@ function createApp(paypal = createPayPal(), analyzer = createRequestAnalyzer(), 
     if (previous && previous.version !== req.body.version) return res.status(409).json({ error: 'This review has changed. Reopen it before saving.' });
     const context = reviewContext(req.body, previous || {});
     if (!context) return res.status(400).json({ error: invalidContext });
-    const record = { ...context, id: previous?.id || randomUUID(), subject: subject?.trim() || previous?.subject || 'Conditional cancellation',
+    const record = { ...previous, ...context, id: previous?.id || randomUUID(), subject: subject?.trim() || previous?.subject || 'Conditional cancellation',
       version: (previous?.version || 0) + 1, ...findingRevision(previous, finding) };
     cases.save(req.caseOwner, record);
     current.caseId = record.id;
     res.json({ finding: record.finding, case: record });
   }));
+  app.post('/api/analysis/condition-cases/:id/shopify-snapshot', validateApiRequest, reviewJson, caseOwner, async (req, res) => {
+    const { orderId, confirmed, version } = req.body || {};
+    if (confirmed !== true || typeof orderId !== 'string' || !/^gid:\/\/shopify\/Order\/[1-9][0-9]{0,24}$/.test(orderId)) {
+      return res.status(400).json({ error: 'Confirm the order and enter a valid Shopify order ID.' });
+    }
+    const conflict = 'This review changed. Reopen it before saving a Shopify snapshot.';
+    try {
+      const record = cases.get(req.caseOwner, req.params.id);
+      if (!record) return res.status(404).json({ error: 'Saved review not found in this browser.' });
+      if (record.version !== version) return res.status(409).json({ error: conflict });
+      const result = await shopify.order(orderId);
+      if (result.orderId !== orderId) return res.status(502).json({ error: 'Shopify returned a different order. No snapshot was saved.' });
+      // Read the current revision again because the Shopify request may take time.
+      const latest = cases.get(req.caseOwner, req.params.id);
+      if (!latest || latest.version !== version) return res.status(409).json({ error: conflict });
+      const { orderNumber, paymentStatus, fulfillmentStatus, queriedAt, source } = result;
+      const shopifySnapshot = { orderId, orderNumber, paymentStatus, fulfillmentStatus, queriedAt, source };
+      const updated = { ...latest, version: version + 1, shopifySnapshot };
+      cases.save(req.caseOwner, updated);
+      return res.json({ version: updated.version, shopifySnapshot });
+    } catch (error) {
+      const known = error instanceof ShopifyError;
+      return res.status(known ? error.status : 500).json({
+        error: known ? error.message : 'Could not retrieve and save the Shopify snapshot. Try again.',
+      });
+    }
+  });
   app.get('/api/shopify/order', validateApiRequest, async (req, res) => {
     try { res.json(await shopify.order(req.query.id)); }
     catch (error) {

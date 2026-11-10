@@ -92,7 +92,7 @@ This is a local demo. Cancellation and shipment states are simulated; Shopify pr
 npm test
 ```
 
-Tests mock external services and cover order-reference matching, stale analysis, session-bound reviews, checkout diagnostics, explicit merchant confirmation, authorization/void duplicate guards, and the isolated Mock demo save/reopen/history flow. The latest local run on November 9, 2026 passed **182/182 tests**.
+Tests mock external services and cover order-reference matching, stale analysis, session-bound reviews, checkout diagnostics, explicit merchant confirmation, authorization/void duplicate guards, and the isolated Mock demo save/reopen/history flow. The latest local run on November 9, 2026 passed **183/183 tests**.
 
 Manual Sandbox evidence and known issues are in [validation notes](docs/VALIDATION.md).
 
@@ -103,3 +103,7 @@ Manual Sandbox evidence and known issues are in [validation notes](docs/VALIDATI
 Analyze a conditional cancellation request to open the merchant finding form. Compare the original request with independent evidence, then save whether the condition was met, was not met, or could not be confirmed. Include a brief evidence note without customer or payment details. For shipment questions, verify handoff with the warehouse or carrier; a Shopify `UNFULFILLED` snapshot does not establish whether handoff took place.
 
 The saved review stores the optional merchant label, condition summary and support ticket ID, latest finding, evidence note, and timestamp in the local ignored `.condition-cases/` directory. The original customer request is not stored. Reopen a saved review in the same browser after a refresh or server restart; clearing cookies loses access. This is a local, single-browser workflow, without account-based sharing. The review shows up to 25 previous findings with evidence and timestamps; editing only the context does not create a finding revision. Earlier findings overwritten before this feature cannot be recovered. A saved review does not link Shopify to PayPal or enable cancellation or void.
+
+### Shopify evidence on a saved review
+
+On the merchant page, reopen a saved conditional review. In **Shopify order on this review**, enter the verified Shopify order GID (for the development test order, `gid://shopify/Order/18973739417770`), check the confirmation box, then choose **Query Shopify and save snapshot**. This requires the configured Shopify development-store credentials and performs a read-only lookup. Reopen the review to see the last saved order, payment status, fulfillment status, and query time. A failed lookup leaves the previous snapshot intact. The snapshot does not change the merchant finding, verify carrier handoff, or link the order to a PayPal transaction. This control is for the merchant page; the mock demo remains offline.

@@ -46,7 +46,7 @@ test('Mock demo saves, reopens and revises the same review without external prov
     assert.equal(jar.has('condition_cases'), false);
     assert.equal(jar.has('sandbox_session'), false);
     assert.ok(jar.has('mock_condition_cases'));
-    for (const path of ['/api/paypal/config', '/api/paypal/orders', '/api/paypal/orders/1001/authorize', '/api/paypal/orders/1001/cancel', '/api/paypal/orders/1001/void', '/api/paypal/orders/1001/capture', '/api/paypal/orders/1001/refund', '/api/shopify/order']) {
+    for (const path of ['/api/paypal/config', '/api/paypal/orders', '/api/paypal/orders/1001/authorize', '/api/paypal/orders/1001/cancel', '/api/paypal/orders/1001/void', '/api/paypal/orders/1001/capture', '/api/paypal/orders/1001/refund', '/api/shopify/order', detailPath.replace('/demo', '') + '/shopify-snapshot']) {
       assert.equal((await request('/demo' + path, { confirmed: true, reviewId: review.reviewId })).status, 403);
     }
     // A mock review cannot open real payment gates even if submitted outside the demo namespace.
