@@ -198,3 +198,40 @@ The reviewed changes for this update are limited to the extractor, its regressio
 - Protected-data access requires Shopify-side app configuration verification; this code change does not grant access or claim that a subsequent real lookup succeeds. No further real query was performed after the diagnostic call. Order field selection, conditional-request blocking, merchant approval, and PayPal safeguards are unchanged.
 - Complete mocked regression suite: **178 passed, 0 failed, 0 skipped**. New tests cover each failure category, partial data rejection, protected-order access denial, safe HTTP diagnostics, and private error-content suppression.
 - No Shopify mutation, PayPal operation, commit or push was performed. Existing local configuration changes were preserved.
+
+## Operator-verified AI + PayPal Sandbox run — 2026-11-10 America/Toronto
+
+Evidence source: the operator confirmed the following results in the browser. Codex did not independently repeat the AI call, PayPal operations, or read-only refreshes. All event timestamps below are **UTC**; the listed events occurred on November 10, 2026 in America/Toronto. The running revision and final refresh timestamp were not supplied.
+
+### Scope and identifiers
+
+- PayPal Order ID: `[REDACTED_ORDER_ID]`
+- PayPal Authorization ID: `[REDACTED_AUTHORIZATION_ID]`
+- Amount: **CAD 100.00**
+- A new PayPal Sandbox order was created for this run.
+
+### Operator-confirmed observations
+
+1. A read-only refresh returned order **COMPLETED**, an Authorization ID, authorization **CREATED**, and capture count **0**.
+2. The operator entered `Please cancel order [REDACTED_ORDER_ID] because I placed it by mistake.`, substituting the actual Order ID in the application. A real AI analysis returned **cancellation_request**, the correct order reference, and the cancellation reason, with no cancellation conditions.
+3. After merchant approval of simulated local cancellation, the page showed **Order cancelled** while the authorization remained **CREATED**.
+4. The merchant separately confirmed the Sandbox void.
+5. A subsequent read-only refresh confirmed authorization **VOIDED**, capture count **0**, and void execution state **CONFIRMED**.
+
+### Observed action history
+
+| Timestamp (UTC) | Action | Result |
+| --- | --- | --- |
+| 2026-11-11T01:40:02.207Z | MERCHANT_CANCEL_SIMULATED_ORDER | CANCELLED |
+| 2026-11-11T01:41:08.439Z | MERCHANT_CONFIRMED_VOID | REQUEST_PREPARED |
+
+**Success is based on the final read-only refresh results, not on `REQUEST_PREPARED`.** The operator did not observe `VOIDED_CONFIRMED_BY_GET` in the displayed history; this record does not claim that event was seen. The final refresh timestamp was not supplied and is not inferred from the preparation event.
+
+### Verification limits
+
+- This is operator-provided browser evidence, not an independent Codex rerun.
+- Local cancellation and shipment states remain simulated; no real warehouse or carrier state was established.
+- No mapping was established between a Shopify test order and this PayPal transaction.
+- This authorization is already **VOIDED** and cannot be reused to demonstrate a new void operation.
+- Automated tests were not rerun in this round. The previously verified **183/183** result remains unchanged and is not presented as a new test run.
+- This entry includes no full order or authorization identifiers, credentials, account emails, raw network responses, or local review records.
