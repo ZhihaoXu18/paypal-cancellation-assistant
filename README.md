@@ -1,6 +1,8 @@
 # PayPal Cancellation Assistant
 
-A merchant review tool for cancellation requests and safe voiding of eligible, uncaptured **PayPal Sandbox authorizations**. PayPal is the payment system at the center: AI extracts what the customer requested, the merchant reviews it, and backend checks gate the actual authorization void.
+A customer writes, **“Cancel my order only if it hasn’t shipped.”** The merchant has to honor that condition before deciding whether to void an uncaptured PayPal authorization. A store status of “unfulfilled” still leaves a key question open: has the warehouse already handed the parcel to the carrier?
+
+**PayPal Cancellation Assistant** turns the message into a review the merchant can save, reopen, and hand off. AI extracts the order reference and the customer’s condition. The merchant records what was verified and can see how the conclusion changed. Conditional requests stay blocked from payment execution. For a separate eligible request, the merchant can explicitly approve a PayPal Sandbox void after the backend verifies the authorization and checks that no funds were captured.
 
 ## Start here for judges
 
