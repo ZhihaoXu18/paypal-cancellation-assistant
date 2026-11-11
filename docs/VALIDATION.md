@@ -1,5 +1,27 @@
 # Validation notes
 
+## Latest verification
+
+Evidence summary as of **November 10, 2026 (America/Toronto)**. The browser results below were confirmed by the operator; Codex did not independently repeat them. This documentation update did not rerun tests or call external APIs. Original records below retain their dates and evidence limits; reproduction steps are in the [testing guide](TESTING.md).
+
+### Automated tests
+
+The previously confirmed full `npm test` run passed **183 tests, 0 failed**. These mocked-service tests cover review/history flows, Shopify snapshot persistence, and mock isolation; they do not verify live API access. The suite was not rerun for the subsequent documentation updates or this summary.
+
+### Mock demo manual acceptance
+
+The operator saved **Unable to confirm**, refreshed and reopened the same review, changed it to **Condition met**, and confirmed **Previous findings (1)** retained the original finding, note, and timestamp. This browser acceptance uses preset analysis and fictional evidence, not real integrations or payment operations.
+
+### Shopify development-store manual acceptance
+
+The operator saved test order **#1001** with **PAID** and **UNFULFILLED**, then confirmed after a failed lookup, refresh, and reopening without another query that the original snapshot and UTC query timestamp **`2026-11-10T03:44:45.162Z`** remained; the merchant finding and evidence note were unchanged. Snapshot recovery after a server restart was **not separately verified manually**. This snapshot does not prove carrier handoff or a PayPal transaction link.
+
+Earlier snapshot-save troubleshooting identified a 404 HTML response from a backend running before the new route was applied; that safe local probe did not query Shopify.
+
+### PayPal Sandbox manual acceptance
+
+The [November 10 operator-verified AI + PayPal run](#operator-verified-ai--paypal-sandbox-run--2026-11-10-americatoronto) confirmed a new CAD 100.00 Sandbox order, real AI analysis of an unconditional cancellation request, and separate merchant approvals for simulated local cancellation and void. The final **read-only refresh** confirmed authorization **VOIDED**, **0 captures**, and void execution state **CONFIRMED**. The operator did **not observe `VOIDED_CONFIRMED_BY_GET`**; `REQUEST_PREPARED` alone is not success evidence. That authorization is already voided and cannot demonstrate a new void. Local cancellation and shipment remain simulated; no Shopify-to-PayPal mapping was established.
+
 ## Latest checks
 
 - 2026-10-19: **110/110 tests passed** after consolidating frontend state/rendering and removing the legacy CLI authorization path. All external calls were mocked. Dependency audit earlier that day: **0 known vulnerabilities**; dependencies unchanged.
